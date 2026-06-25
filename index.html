@@ -1,0 +1,2431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="CNX OS">
+<title>CNX Master OS — Command Center</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:wght@400;500;700&family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+<style>
+/* ── TOKENS ── */
+:root {
+  --ink: #0B0C0F;
+  --ink2: #13151A;
+  --ink3: #1A1D24;
+  --ink4: #22262F;
+  --rule: #2A2E38;
+  --rule2: #363B47;
+  --gold: #C9965A;
+  --gold-hi: #E8B068;
+  --gold-lo: rgba(201,150,90,0.12);
+  --text: #E8EDF5;
+  --text2: #8A94A6;
+  --text3: #4A5060;
+  --green: #3DAA72;
+  --red: #C85050;
+  --amber: #D4953A;
+  --blue: #4A7ED8;
+  --teal: #2EA897;
+  --purple: #7C58C8;
+  --font-display: 'Playfair Display', Georgia, serif;
+  --font-body: 'Inter', -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', monospace;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; background: var(--ink); color: var(--text); font-family: var(--font-body); font-size: 13px; line-height: 1.6; }
+::-webkit-scrollbar { width: 3px; height: 3px; }
+::-webkit-scrollbar-thumb { background: var(--rule2); border-radius: 2px; }
+button, input, textarea, select { font-family: inherit; }
+textarea { resize: vertical; }
+a { color: inherit; text-decoration: none; }
+
+/* ── LAYOUT ── */
+#app { display: grid; grid-template-rows: auto auto 1fr; height: 100vh; overflow: hidden; }
+
+/* ── TOPBAR ── */
+#topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 24px; height: 56px;
+  border-bottom: 1px solid var(--rule);
+  background: var(--ink2);
+  position: relative; z-index: 20;
+}
+.tb-brand { display: flex; align-items: center; gap: 12px; }
+.tb-logo {
+  width: 32px; height: 32px; border-radius: 8px;
+  background: linear-gradient(135deg, #1a0e0e, #0e1a14);
+  border: 1px solid rgba(201,150,90,0.35);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px;
+}
+.tb-name { font-family: var(--font-display); font-size: 15px; font-weight: 500; color: var(--gold-hi); }
+.tb-sub { font-size: 10px; color: var(--text3); font-family: var(--font-mono); letter-spacing: 1px; text-transform: uppercase; }
+.tb-signals { display: flex; align-items: center; gap: 20px; }
+.signal { display: flex; align-items: center; gap: 7px; }
+.signal-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.signal-label { font-family: var(--font-mono); font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.8px; }
+.signal-val { font-family: var(--font-mono); font-size: 13px; font-weight: 500; }
+.tb-right { display: flex; align-items: center; gap: 12px; }
+#live-clock { font-family: var(--font-mono); font-size: 13px; color: var(--gold); letter-spacing: 1.5px; }
+#day-badge {
+  padding: 3px 10px; border-radius: 20px;
+  background: var(--gold-lo); border: 1px solid rgba(201,150,90,0.25);
+  font-family: var(--font-mono); font-size: 9px; color: var(--gold);
+  letter-spacing: 1px; text-transform: uppercase;
+}
+.mode-toggle {
+  display: flex; gap: 2px; padding: 3px;
+  background: var(--ink3); border: 1px solid var(--rule); border-radius: 8px;
+}
+.mode-btn {
+  padding: 5px 12px; border-radius: 6px; border: none; cursor: pointer;
+  font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.8px; text-transform: uppercase;
+  background: transparent; color: var(--text3); transition: all 0.2s;
+}
+.mode-btn.active { background: var(--ink4); color: var(--gold); border: 1px solid var(--rule2); }
+
+/* ── NAV STRIP ── */
+#navstrip {
+  display: flex; align-items: center; gap: 0;
+  padding: 0 20px;
+  background: var(--ink2); border-bottom: 1px solid var(--rule);
+  overflow-x: auto; flex-shrink: 0;
+}
+#navstrip::-webkit-scrollbar { display: none; }
+.nav-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 12px 14px; cursor: pointer;
+  border-bottom: 2px solid transparent;
+  color: var(--text3); font-size: 11px; font-weight: 500;
+  transition: all 0.2s; white-space: nowrap; flex-shrink: 0;
+}
+.nav-item:hover { color: var(--text2); }
+.nav-item.active { color: var(--gold); border-bottom-color: var(--gold); }
+.nav-item .nav-icon { font-size: 12px; }
+.nav-pct { font-family: var(--font-mono); font-size: 9px; opacity: 0.7; }
+
+/* ── CONTENT AREA ── */
+#content { overflow-y: auto; overflow-x: hidden; }
+.view { display: none; padding: 24px; max-width: 1200px; margin: 0 auto; padding-bottom: 60px; }
+.view.active { display: block; }
+
+/* ── COMPONENTS ── */
+.card {
+  background: var(--ink2); border: 1px solid var(--rule);
+  border-radius: 12px; padding: 20px; margin-bottom: 16px;
+}
+.card-sm { padding: 14px; border-radius: 10px; }
+.card-title {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 1.5px;
+  text-transform: uppercase; color: var(--text3);
+  margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between;
+}
+.card-title strong { font-family: var(--font-mono); color: var(--gold); font-size: 12px; font-weight: 500; letter-spacing: 0; }
+
+.g2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.g3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+.g4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+
+.tile {
+  background: var(--ink3); border: 1px solid var(--rule); border-radius: 10px; padding: 14px;
+}
+.tile-lbl { font-family: var(--font-mono); font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text3); margin-bottom: 6px; }
+.tile-val { font-family: var(--font-mono); font-size: 22px; font-weight: 500; line-height: 1; margin-bottom: 3px; }
+.tile-sub { font-size: 10px; color: var(--text3); }
+
+.pbar { height: 4px; background: var(--ink3); border-radius: 2px; overflow: hidden; }
+.pbar-fill { height: 100%; border-radius: 2px; transition: width 0.8s ease; }
+
+.chk {
+  width: 18px; height: 18px; border-radius: 4px; border: 1.5px solid var(--rule2);
+  background: transparent; cursor: pointer; display: flex; align-items: center;
+  justify-content: center; font-size: 10px; color: transparent;
+  transition: all 0.15s; flex-shrink: 0; user-select: none;
+}
+.chk.on { background: var(--green); border-color: var(--green); color: #fff; }
+
+.tag {
+  display: inline-flex; align-items: center;
+  padding: 2px 8px; border-radius: 20px; font-family: var(--font-mono);
+  font-size: 9px; letter-spacing: 0.8px; text-transform: uppercase; border: 1px solid;
+}
+
+.btn {
+  padding: 8px 18px; border-radius: 8px; border: none; cursor: pointer;
+  font-size: 12px; font-weight: 500; transition: all 0.2s;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.btn-gold { background: var(--gold); color: var(--ink); }
+.btn-gold:hover { background: var(--gold-hi); }
+.btn-ghost { background: transparent; border: 1px solid var(--rule2); color: var(--text2); }
+.btn-ghost:hover { border-color: var(--gold); color: var(--gold); }
+
+.inp {
+  width: 100%; background: var(--ink3); border: 1px solid var(--rule);
+  border-radius: 8px; color: var(--text); padding: 8px 12px; font-size: 12px;
+  outline: none; transition: border-color 0.2s;
+}
+.inp:focus { border-color: rgba(201,150,90,0.4); }
+.inp::placeholder { color: var(--text3); }
+
+.divider { height: 1px; background: var(--rule); margin: 16px 0; }
+
+.section-label {
+  font-family: var(--font-mono); font-size: 9px; letter-spacing: 2px;
+  text-transform: uppercase; color: var(--text3);
+  margin-bottom: 12px; display: flex; align-items: center; gap: 10px;
+}
+.section-label::after { content: ''; flex: 1; height: 1px; background: var(--rule); }
+
+.badge-green { background: rgba(61,170,114,0.1); color: var(--green); border-color: rgba(61,170,114,0.3); }
+.badge-amber { background: rgba(212,149,58,0.1); color: var(--amber); border-color: rgba(212,149,58,0.3); }
+.badge-red { background: rgba(200,80,80,0.1); color: var(--red); border-color: rgba(200,80,80,0.3); }
+.badge-blue { background: rgba(74,126,216,0.1); color: var(--blue); border-color: rgba(74,126,216,0.3); }
+.badge-purple { background: rgba(124,88,200,0.1); color: var(--purple); border-color: rgba(124,88,200,0.3); }
+.badge-gold { background: var(--gold-lo); color: var(--gold); border-color: rgba(201,150,90,0.3); }
+
+/* ── TOAST ── */
+#toast {
+  position: fixed; bottom: 24px; right: 24px; z-index: 999;
+  background: var(--ink4); border: 1px solid var(--rule2); border-radius: 8px;
+  padding: 10px 16px; font-size: 12px; font-family: var(--font-mono);
+  opacity: 0; transform: translateY(6px); transition: all 0.25s; pointer-events: none;
+}
+#toast.show { opacity: 1; transform: translateY(0); }
+
+/* ── SYNC BAR ── */
+#sync-strip {
+  height: 2px; position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+  opacity: 0; transition: opacity 0.3s;
+}
+#sync-strip.active {
+  opacity: 1;
+  background: linear-gradient(90deg, transparent, var(--gold), transparent);
+  animation: sweep 1.2s infinite;
+}
+@keyframes sweep { 0%,100%{opacity:0.4} 50%{opacity:1} }
+
+/* ── MORNING BRIEF ── */
+.brief-hero {
+  background: linear-gradient(135deg, var(--ink2), var(--ink3));
+  border: 1px solid var(--rule); border-radius: 14px;
+  padding: 28px; margin-bottom: 20px;
+  display: flex; align-items: center; gap: 28px;
+}
+.brief-ring-wrap { flex-shrink: 0; }
+.brief-meta { flex: 1; }
+.brief-date {
+  font-family: var(--font-display); font-size: 22px; font-weight: 500;
+  color: var(--gold-hi); margin-bottom: 4px;
+}
+.brief-day-line {
+  font-family: var(--font-mono); font-size: 10px; color: var(--text3);
+  letter-spacing: 1px; margin-bottom: 14px;
+}
+.brief-tags { display: flex; gap: 6px; flex-wrap: wrap; }
+.signal-strip {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px;
+}
+.signal-card {
+  background: var(--ink3); border: 1px solid var(--rule); border-radius: 10px;
+  padding: 16px; border-top: 2px solid;
+}
+.signal-card-lbl { font-family: var(--font-mono); font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text3); margin-bottom: 6px; }
+.signal-card-val { font-family: var(--font-display); font-size: 28px; color: var(--text); margin-bottom: 4px; line-height: 1; }
+.signal-card-sub { font-size: 11px; color: var(--text2); line-height: 1.5; }
+
+.pillar-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;
+  margin-bottom: 20px;
+}
+.pillar-card {
+  background: var(--ink2); border: 1px solid var(--rule); border-radius: 10px;
+  padding: 14px; cursor: pointer; transition: all 0.2s; border-left: 3px solid;
+}
+.pillar-card:hover { background: var(--ink3); }
+.pillar-name { font-size: 11px; font-weight: 600; color: var(--text); margin-bottom: 3px; }
+.pillar-sub { font-size: 10px; color: var(--text3); margin-bottom: 10px; }
+.pillar-pct { font-family: var(--font-mono); font-size: 18px; font-weight: 500; margin-bottom: 5px; }
+
+/* ── ACADEMY ── */
+.content-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 0; border-bottom: 1px solid var(--rule); cursor: pointer;
+}
+.content-row:last-child { border-bottom: none; }
+.content-row-name { font-size: 12px; color: var(--text); flex: 1; line-height: 1.5; }
+.content-row-meta { font-family: var(--font-mono); font-size: 9px; color: var(--text3); flex-shrink: 0; }
+.arch-dots { display: flex; gap: 3px; flex-shrink: 0; }
+.arch-dot {
+  width: 8px; height: 8px; border-radius: 2px; border: 1px solid var(--rule2);
+  transition: all 0.15s; cursor: pointer; flex-shrink: 0;
+}
+.arch-dot.done { border-color: transparent; }
+
+.ld-top10 { display: flex; flex-direction: column; gap: 6px; }
+.ld-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; background: var(--ink3); border: 1px solid var(--rule);
+  border-radius: 8px; cursor: pointer; transition: all 0.15s;
+}
+.ld-item.done { border-color: rgba(61,170,114,0.2); background: rgba(61,170,114,0.04); }
+.ld-item-num { font-family: var(--font-mono); font-size: 11px; color: var(--text3); min-width: 24px; }
+.ld-item-name { font-size: 12px; color: var(--text); flex: 1; }
+.ld-item.done .ld-item-name { color: var(--text3); text-decoration: line-through; }
+
+/* ── CNIS ── */
+.sprint-board { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.sprint-col { background: var(--ink3); border: 1px solid var(--rule); border-radius: 10px; padding: 12px; min-height: 200px; }
+.sprint-col-hdr {
+  font-family: var(--font-mono); font-size: 9px; letter-spacing: 1.5px;
+  text-transform: uppercase; margin-bottom: 10px; display: flex; align-items: center; gap: 6px;
+}
+.sprint-item {
+  background: var(--ink2); border: 1px solid var(--rule); border-radius: 7px;
+  padding: 9px 11px; margin-bottom: 7px; cursor: pointer; transition: all 0.15s;
+}
+.sprint-item:hover { border-color: var(--rule2); }
+.sprint-item-name { font-size: 11px; color: var(--text); margin-bottom: 3px; font-weight: 500; }
+.sprint-item-meta { font-size: 10px; color: var(--text3); font-family: var(--font-mono); }
+.sprint-item-log { width: 100%; margin-top: 8px; background: var(--ink); border: 1px solid var(--rule); border-radius: 5px; color: var(--text); padding: 6px 8px; font-size: 11px; outline: none; min-height: 44px; font-family: inherit; }
+
+/* ── HEALTH ── */
+.health-ring-row { display: flex; align-items: center; gap: 20px; margin-bottom: 14px; }
+.marker-row {
+  display: grid; grid-template-columns: 1fr auto auto auto;
+  align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--rule);
+}
+.marker-name { font-size: 12px; color: var(--text); }
+.marker-val { font-family: var(--font-mono); font-size: 14px; font-weight: 500; text-align: right; }
+.marker-target { font-family: var(--font-mono); font-size: 10px; color: var(--text3); }
+.marker-status { font-size: 10px; min-width: 55px; text-align: right; }
+
+/* ── WEEKLY COMMAND ── */
+.week-grid { display: grid; grid-template-columns: 130px repeat(7, 1fr); gap: 3px; }
+.wg-header { font-family: var(--font-mono); font-size: 9px; color: var(--text3); padding: 6px 4px; text-align: center; }
+.wg-row-label { font-family: var(--font-mono); font-size: 10px; color: var(--text3); padding: 8px 6px; display: flex; align-items: center; border-right: 1px solid var(--rule); }
+.wg-cell {
+  background: var(--ink3); border: 1px solid var(--rule); border-radius: 5px;
+  min-height: 52px; padding: 6px; cursor: pointer; transition: all 0.15s;
+}
+.wg-cell:hover { border-color: var(--rule2); }
+.wg-cell.done { background: rgba(61,170,114,0.05); border-color: rgba(61,170,114,0.2); }
+.wg-cell.today { border-color: rgba(201,150,90,0.35); }
+.wg-cell-check { font-size: 10px; font-family: var(--font-mono); color: var(--green); }
+
+/* ── BLOGGING ── */
+.blog-calendar { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; margin-bottom: 14px; }
+.bc-day {
+  aspect-ratio: 1; border-radius: 6px; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; font-size: 10px; font-family: var(--font-mono);
+  border: 1px solid var(--rule); background: var(--ink3); color: var(--text3); cursor: pointer;
+}
+.bc-day.has-post { background: rgba(74,126,216,0.1); border-color: rgba(74,126,216,0.3); color: var(--blue); }
+.bc-day.today { border-color: var(--gold); color: var(--gold); }
+
+/* ── FAMILY ── */
+.ritual-row {
+  display: flex; align-items: center; gap: 10px; padding: 10px 0;
+  border-bottom: 1px solid var(--rule); cursor: pointer;
+}
+.ritual-emoji { font-size: 18px; flex-shrink: 0; }
+.ritual-name { font-size: 12px; color: var(--text); flex: 1; }
+.ritual-freq { font-family: var(--font-mono); font-size: 9px; color: var(--text3); }
+
+/* ── TRACKERS ── */
+.tracker-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.tracker-card {
+  background: var(--ink3); border: 1px solid var(--rule); border-radius: 10px;
+  padding: 16px; border-left: 3px solid; transition: all 0.2s; cursor: pointer;
+  display: block; text-decoration: none;
+}
+.tracker-card:hover { background: var(--ink4); border-color: var(--rule2); transform: translateY(-1px); }
+.tracker-card-icon { font-size: 20px; margin-bottom: 8px; }
+.tracker-card-name { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+.tracker-card-desc { font-size: 10px; color: var(--text3); line-height: 1.5; margin-bottom: 10px; }
+.tracker-card-link { font-family: var(--font-mono); font-size: 9px; color: var(--gold); display: flex; align-items: center; gap: 4px; }
+
+/* ── DASHBOARD ── */
+.dash-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 14px; }
+.dash-row3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.dash-row4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.spark-wrap { width: 100%; }
+.dash-mini-card { background: var(--ink3); border: 1px solid var(--rule); border-radius: 10px; padding: 14px; }
+.dash-mini-lbl { font-family: var(--font-mono); font-size: 9px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--text3); margin-bottom: 8px; display: flex; justify-content: space-between; align-items: baseline; }
+.dash-mini-val { font-family: var(--font-display); font-size: 22px; color: var(--text); }
+.heat-cell { width: 100%; aspect-ratio: 1; border-radius: 3px; }
+.heat-grid { display: grid; grid-template-columns: repeat(14, 1fr); gap: 3px; }
+.dash-bar-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; }
+.dash-bar-track { flex: 1; height: 6px; background: var(--ink4); border-radius: 3px; overflow: hidden; }
+.dash-bar-fill { height: 100%; border-radius: 3px; }
+
+/* ── WEEKLY VIEW ── */
+.week-review-card {
+  background: var(--ink3); border: 1px solid var(--rule); border-radius: 10px;
+  padding: 16px; margin-bottom: 10px;
+}
+.week-review-label { font-family: var(--font-mono); font-size: 9px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text3); margin-bottom: 8px; }
+.week-review-ta { width: 100%; background: var(--ink); border: 1px solid var(--rule); border-radius: 7px; color: var(--text); padding: 10px 12px; font-size: 12px; outline: none; min-height: 60px; font-family: inherit; line-height: 1.7; transition: border-color 0.2s; }
+.week-review-ta:focus { border-color: rgba(201,150,90,0.3); }
+.week-review-ta::placeholder { color: var(--text3); }
+
+/* ── EMPTY STATE ── */
+.empty { text-align: center; padding: 28px; font-family: var(--font-mono); font-size: 10px; color: var(--text3); border: 1px dashed var(--rule); border-radius: 10px; line-height: 2; }
+
+@media (max-width: 900px) {
+  .pillar-grid { grid-template-columns: repeat(2,1fr); }
+  .g4 { grid-template-columns: repeat(2,1fr); }
+  .sprint-board { grid-template-columns: repeat(2,1fr); }
+  .signal-strip { grid-template-columns: 1fr; }
+  .brief-hero { flex-direction: column; }
+  .week-grid { grid-template-columns: 80px repeat(7,1fr); }
+  .tracker-grid { grid-template-columns: repeat(2,1fr); }
+  .dash-grid { grid-template-columns: 1fr; }
+  .dash-row3 { grid-template-columns: repeat(2,1fr); }
+  .dash-row4 { grid-template-columns: repeat(2,1fr); }
+}
+@media (max-width: 600px) {
+  .g2, .g3 { grid-template-columns: 1fr; }
+  .pillar-grid { grid-template-columns: 1fr 1fr; }
+  .tracker-grid { grid-template-columns: 1fr; }
+  .dash-row3, .dash-row4 { grid-template-columns: 1fr 1fr; }
+  .heat-grid { grid-template-columns: repeat(7, 1fr); }
+}
+</style>
+</head>
+<body>
+<div id="sync-strip"></div>
+<div id="app">
+
+  <!-- ── TOPBAR ── -->
+  <div id="topbar">
+    <div class="tb-brand">
+      <div class="tb-logo">⬡</div>
+      <div>
+        <div class="tb-name">CNX Master OS</div>
+        <div class="tb-sub">Command Center · PK</div>
+      </div>
+    </div>
+    <div class="tb-signals" id="tb-signals">
+      <div class="signal">
+        <div class="signal-dot" id="sig-dot-overall" style="background:var(--amber)"></div>
+        <div class="signal-label">Overall</div>
+        <div class="signal-val" id="sig-overall" style="color:var(--amber)">—%</div>
+      </div>
+      <div class="signal">
+        <div class="signal-dot" id="sig-dot-risk" style="background:var(--text3)"></div>
+        <div class="signal-label">Risk</div>
+        <div class="signal-val" id="sig-risk" style="color:var(--text3); font-size:10px">—</div>
+      </div>
+      <div class="signal">
+        <div class="signal-dot" style="background:var(--teal)"></div>
+        <div class="signal-label">Next move</div>
+        <div class="signal-val" id="sig-next" style="color:var(--teal); font-size:10px">—</div>
+      </div>
+    </div>
+    <div class="tb-right">
+      <div id="live-clock">00:00</div>
+      <div id="day-badge">Day —</div>
+      <div class="mode-toggle">
+        <button class="mode-btn active" id="mode-brief" onclick="setMode('brief')">Morning Brief</button>
+        <button class="mode-btn" id="mode-weekly" onclick="setMode('weekly')">Weekly Command</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── NAV ── -->
+  <div id="navstrip">
+    <div class="nav-item active" data-view="brief" onclick="switchView('brief')">
+      <span class="nav-icon">☀</span> Overview
+    </div>
+    <div class="nav-item" data-view="dashboard" onclick="switchView('dashboard')">
+      <span class="nav-icon">▦</span> Dashboard
+    </div>
+    <div class="nav-item" data-view="wellbeing" onclick="switchView('wellbeing')">
+      <span class="nav-icon">◎</span> Wellbeing <span class="nav-pct" id="nav-pct-wellbeing"></span>
+    </div>
+    <div class="nav-item" data-view="academy" onclick="switchView('academy')">
+      <span class="nav-icon">🎓</span> Academy L&D <span class="nav-pct" id="nav-pct-academy"></span>
+    </div>
+    <div class="nav-item" data-view="cnis" onclick="switchView('cnis')">
+      <span class="nav-icon">⚡</span> CNIS Build <span class="nav-pct" id="nav-pct-cnis"></span>
+    </div>
+    <div class="nav-item" data-view="saupskill" onclick="switchView('saupskill')">
+      <span class="nav-icon">🎯</span> SA Upskill <span class="nav-pct" id="nav-pct-saupskill"></span>
+    </div>
+    <div class="nav-item" data-view="blogging" onclick="switchView('blogging')">
+      <span class="nav-icon">✍</span> Blogging <span class="nav-pct" id="nav-pct-blogging"></span>
+    </div>
+    <div class="nav-item" data-view="health" onclick="switchView('health')">
+      <span class="nav-icon">🩺</span> Health OS <span class="nav-pct" id="nav-pct-health"></span>
+    </div>
+    <div class="nav-item" data-view="seo" onclick="switchView('seo')">
+      <span class="nav-icon">🔍</span> SEO & Web <span class="nav-pct" id="nav-pct-seo"></span>
+    </div>
+    <div class="nav-item" data-view="family" onclick="switchView('family')">
+      <span class="nav-icon">❤</span> Family & Co <span class="nav-pct" id="nav-pct-family"></span>
+    </div>
+    <div class="nav-item" data-view="trackers" onclick="switchView('trackers')">
+      <span class="nav-icon">🔗</span> Trackers
+    </div>
+    <div class="nav-item" data-view="weekly" onclick="switchView('weekly')">
+      <span class="nav-icon">🔁</span> Weekly Review
+    </div>
+  </div>
+
+  <!-- ── CONTENT ── -->
+  <div id="content">
+
+    <!-- ════ MORNING BRIEF ════ -->
+    <div class="view active" id="view-brief">
+      <div class="brief-hero">
+        <div class="brief-ring-wrap">
+          <svg width="100" height="100" viewBox="0 0 100 100">
+            <circle cx="50" cy="50" r="40" fill="none" stroke="var(--ink4)" stroke-width="8"/>
+            <circle cx="50" cy="50" r="40" fill="none" stroke="var(--gold)" stroke-width="8"
+              stroke-linecap="round" id="brief-ring-circle"
+              stroke-dasharray="251.3" stroke-dashoffset="251.3"
+              transform="rotate(-90 50 50)" style="transition: stroke-dashoffset 1.2s ease"/>
+            <text x="50" y="47" text-anchor="middle" fill="var(--gold-hi)" font-size="18" font-weight="700" font-family="IBM Plex Mono, monospace" id="brief-ring-pct">0%</text>
+            <text x="50" y="60" text-anchor="middle" fill="var(--text3)" font-size="8" font-family="IBM Plex Mono, monospace">overall</text>
+          </svg>
+        </div>
+        <div class="brief-meta">
+          <div class="brief-date" id="brief-date">—</div>
+          <div class="brief-day-line" id="brief-day-line">CNX Master OS · Unified Command</div>
+          <div class="brief-tags" id="brief-tags"></div>
+        </div>
+        <div style="flex-shrink:0;text-align:right">
+          <div id="brief-firstmove" style="max-width:280px;font-size:12px;color:var(--text2);line-height:1.7;font-style:italic;padding:10px 14px;background:rgba(201,150,90,0.06);border:1px solid rgba(201,150,90,0.15);border-radius:8px">
+            Set tomorrow's first move in Evening Close →
+          </div>
+        </div>
+      </div>
+
+      <div class="signal-strip">
+        <div class="signal-card" style="border-top-color: var(--green)" id="sc-today">
+          <div class="signal-card-lbl">Today's completion</div>
+          <div class="signal-card-val" id="sc-today-val">0%</div>
+          <div class="signal-card-sub" id="sc-today-sub">0 of 8 non-negotiables done</div>
+        </div>
+        <div class="signal-card" style="border-top-color: var(--red)" id="sc-risk">
+          <div class="signal-card-lbl">Biggest risk today</div>
+          <div class="signal-card-val" style="font-size:16px;font-family:var(--font-body);font-weight:500" id="sc-risk-val">Checking…</div>
+          <div class="signal-card-sub" id="sc-risk-sub">—</div>
+        </div>
+        <div class="signal-card" style="border-top-color: var(--teal)" id="sc-move">
+          <div class="signal-card-lbl">First move · right now</div>
+          <div class="signal-card-val" style="font-size:16px;font-family:var(--font-body);font-weight:500" id="sc-move-val">—</div>
+          <div class="signal-card-sub" id="sc-move-sub">—</div>
+        </div>
+      </div>
+
+      <div class="section-label">8 Pillars — tap to navigate</div>
+      <div class="pillar-grid" id="pillar-grid"></div>
+
+      <div class="g2">
+        <div class="card">
+          <div class="card-title">Quick Log — Today's Non-Negotiables</div>
+          <div id="brief-daily-tasks"></div>
+          <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+            <span id="brief-save-status" style="font-family:var(--font-mono);font-size:9px;color:var(--text3)">Not saved</span>
+            <button class="btn btn-gold" style="margin-left:auto" onclick="saveDaily()">Save Day</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">Evening Close <span style="font-family:var(--font-mono);font-size:9px;color:var(--text3);font-weight:400">5 min · feeds tomorrow's brief</span></div>
+          <div style="margin-bottom:10px">
+            <div style="font-size:10px;color:var(--text3);margin-bottom:5px;font-family:var(--font-mono)">What moved today?</div>
+            <textarea class="inp" id="eve-moved" rows="2" placeholder="One specific thing. Not 'worked on Academy' — 'generated C05 pre-quiz, 23 questions'." style="min-height:52px;resize:none"></textarea>
+          </div>
+          <div style="margin-bottom:10px">
+            <div style="font-size:10px;color:var(--text3);margin-bottom:5px;font-family:var(--font-mono)">What blocked you?</div>
+            <textarea class="inp" id="eve-blocked" rows="2" placeholder="Name it exactly." style="min-height:44px;resize:none"></textarea>
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--teal);margin-bottom:5px;font-family:var(--font-mono)">Tomorrow's first move — be exact</div>
+            <textarea class="inp" id="eve-firstmove" rows="2" placeholder="e.g. Open Academy → generate C06 lab exercise using template. Before checking anything else." style="min-height:44px;resize:none;border-color:rgba(46,168,151,0.25)"></textarea>
+          </div>
+          <button class="btn btn-gold" style="width:100%;margin-top:10px" onclick="saveEvening()">Close Day →</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ════ DASHBOARD ════ -->
+    <div class="view" id="view-dashboard">
+      <div class="dash-row4" style="margin-bottom:14px">
+        <div class="dash-mini-card">
+          <div class="dash-mini-lbl">Overall <span id="db-overall-trend-lbl" style="color:var(--text2)"></span></div>
+          <div class="dash-mini-val" id="db-overall-val" style="color:var(--gold-hi)">—%</div>
+        </div>
+        <div class="dash-mini-card">
+          <div class="dash-mini-lbl">14-Day Avg</div>
+          <div class="dash-mini-val" id="db-avg-val" style="color:var(--green)">—%</div>
+        </div>
+        <div class="dash-mini-card">
+          <div class="dash-mini-lbl">Academy Velocity</div>
+          <div class="dash-mini-val" id="db-velocity-val" style="color:var(--blue)">—</div>
+        </div>
+        <div class="dash-mini-card">
+          <div class="dash-mini-lbl">Days to Jul 7</div>
+          <div class="dash-mini-val" id="db-deadline-val" style="color:var(--amber)">—</div>
+        </div>
+      </div>
+
+      <div class="dash-grid" style="margin-bottom:14px">
+        <div class="card" style="margin-bottom:0">
+          <div class="card-title">14-Day Overall Score Trend</div>
+          <div class="spark-wrap"><canvas id="db-trend-chart" height="120"></canvas></div>
+        </div>
+        <div class="card" style="margin-bottom:0">
+          <div class="card-title">SA Upskill — Hours/Day</div>
+          <div class="spark-wrap"><canvas id="db-sa-chart" height="120"></canvas></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">All 8 Pillars — Current Standing</div>
+        <div class="spark-wrap"><canvas id="db-pillar-chart" height="180"></canvas></div>
+      </div>
+
+      <div class="dash-row3">
+        <div class="card" style="margin-bottom:0">
+          <div class="card-title">Health Markers — Progress to 45-Day Target</div>
+          <div class="spark-wrap"><canvas id="db-health-chart" height="160"></canvas></div>
+        </div>
+        <div class="card" style="margin-bottom:0">
+          <div class="card-title">This Week — Forecast vs Actual</div>
+          <div id="db-forecast-bars"></div>
+        </div>
+        <div class="card" style="margin-bottom:0">
+          <div class="card-title">14-Day Streak Heatmap</div>
+          <div class="heat-grid" id="db-streak-heat"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ════ WELLBEING ════ -->
+    <div class="view" id="view-wellbeing">
+      <div class="card">
+        <div class="card-title">Daily Non-Negotiables <strong id="wb-task-pct">0%</strong></div>
+        <div id="wb-tasks"></div>
+      </div>
+      <div class="g2">
+        <div class="card">
+          <div class="card-title">Medicines <strong id="wb-med-pct">0%</strong></div>
+          <div id="wb-meds"></div>
+        </div>
+        <div class="card">
+          <div class="card-title">Substance Taper</div>
+          <div id="wb-taper"></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Streak — 14 days</div>
+        <div id="wb-streak" style="display:flex;gap:4px;flex-wrap:wrap"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Evening Journal</div>
+        <div id="wb-journal-questions"></div>
+        <button class="btn btn-gold" style="width:100%;margin-top:12px" onclick="saveWellbeing()">Save Wellbeing</button>
+      </div>
+    </div>
+
+    <!-- ════ ACADEMY L&D ════ -->
+    <div class="view" id="view-academy">
+      <div class="card" style="border-left:3px solid var(--blue)">
+        <div class="card-title">L&D Head · ESecurityIn Academy <strong id="aca-overall-pct" style="color:var(--blue)">0%</strong></div>
+        <div class="g3" style="margin-bottom:14px">
+          <div class="tile"><div class="tile-lbl">Competencies</div><div class="tile-val" style="color:var(--blue)" id="aca-comp-done">0/15</div><div class="tile-sub">content generated</div></div>
+          <div class="tile"><div class="tile-lbl">Deadline</div><div class="tile-val" style="color:var(--amber)" id="aca-days-left">—</div><div class="tile-sub">days to Jul 7</div></div>
+          <div class="tile"><div class="tile-lbl">Today's Target</div><div class="tile-val" style="color:var(--green)" id="aca-today-target">1</div><div class="tile-sub">competency</div></div>
+        </div>
+        <div class="pbar" style="margin-bottom:6px"><div class="pbar-fill" id="aca-pbar" style="background:var(--blue);width:0%"></div></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Top 10 — L&D Head Weekly Actions</div>
+        <div class="ld-top10" id="ld-top10"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Content Pipeline — 15 Competencies × 6 Archetypes</div>
+        <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+          <span class="tag badge-blue">P PPT</span>
+          <span class="tag badge-purple">G Glossary</span>
+          <span class="tag badge-green">R Pre-read</span>
+          <span class="tag badge-amber">Q Pre-Quiz</span>
+          <span class="tag badge-red">A Post-Quiz</span>
+          <span class="tag" style="background:rgba(46,168,151,0.1);color:var(--teal);border-color:rgba(46,168,151,0.3)">L Lab</span>
+        </div>
+        <div id="academy-pipeline"></div>
+        <button class="btn btn-gold" style="margin-top:12px" onclick="saveAcademy()">Save Progress</button>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Weekly Masterclass & Catch-up Log</div>
+        <div id="aca-masterclass-log"></div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <input class="inp" id="aca-log-inp" placeholder="Log masterclass topic, catch-up notes, or demo prep…" style="flex:1">
+          <button class="btn btn-gold" onclick="logAcademy()">Log</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ════ CNIS BUILD ════ -->
+    <div class="view" id="view-cnis">
+      <div class="card" style="border-left:3px solid var(--red)">
+        <div class="card-title">CNIS Product Suite — CyberNeurix Technologies <strong id="cnis-overall-pct" style="color:var(--red)">0%</strong></div>
+        <div class="g4">
+          <div class="tile"><div class="tile-lbl">RixTrace</div><div class="tile-val" id="cnis-rix-pct" style="color:var(--red)">0%</div><div class="tile-sub">Phase 2 build</div></div>
+          <div class="tile"><div class="tile-lbl">RixOne</div><div class="tile-val" id="cnis-rxone-pct" style="color:var(--blue)">0%</div><div class="tile-sub">sprints</div></div>
+          <div class="tile"><div class="tile-lbl">Scoring Engine</div><div class="tile-val" id="cnis-score-pct" style="color:var(--amber)">0%</div><div class="tile-sub">NEURIX/ERI</div></div>
+          <div class="tile"><div class="tile-lbl">AI Plugin</div><div class="tile-val" id="cnis-ai-pct" style="color:var(--purple)">0%</div><div class="tile-sub">integration</div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">RixTrace — Sprint Board</div>
+        <div class="sprint-board" id="cnis-sprint-board"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Scoring Engine — NEURIX/ERI Architecture</div>
+        <div id="cnis-scoring"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Daily Build Log</div>
+        <div id="cnis-build-log" style="max-height:200px;overflow-y:auto;margin-bottom:10px"></div>
+        <div style="display:flex;gap:8px">
+          <input class="inp" id="cnis-log-inp" placeholder="What did you build, fix, or design today?">
+          <button class="btn btn-gold" onclick="logCNIS()">Log</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ════ SA UPSKILL ════ -->
+    <div class="view" id="view-saupskill">
+      <div class="card" style="border-left:3px solid var(--teal)">
+        <div class="card-title">SA Upskill — 187-Day Plan <strong id="sa-day-lbl" style="color:var(--teal)">Day —</strong></div>
+        <div class="g3">
+          <div class="tile"><div class="tile-lbl">Current Phase</div><div class="tile-val" id="sa-phase-name" style="color:var(--teal);font-size:15px">—</div><div class="tile-sub" id="sa-phase-days">—</div></div>
+          <div class="tile"><div class="tile-lbl">Progress</div><div class="tile-val" id="sa-pct" style="color:var(--teal)">0%</div><div class="tile-sub">of 187 days</div></div>
+          <div class="tile"><div class="tile-lbl">Hours This Week</div><div class="tile-val" id="sa-hrs-wk" style="color:var(--teal)">0h</div><div class="tile-sub">target 8h/wk</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Today's Study Log</div>
+        <textarea class="inp" id="sa-log-today" rows="3" placeholder="What did you study or practise today?"></textarea>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <input class="inp" id="sa-hrs-today" type="number" step="0.5" placeholder="hrs" style="width:80px">
+          <input class="inp" id="sa-note-today" placeholder="Key insight" style="flex:1">
+          <button class="btn btn-gold" onclick="saveSA()">Save</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">14-Day Heatmap</div>
+        <div id="sa-heatmap" style="display:flex;gap:4px"></div>
+      </div>
+    </div>
+
+    <!-- ════ BLOGGING ════ -->
+    <div class="view" id="view-blogging">
+      <div class="card" style="border-left:3px solid var(--purple)">
+        <div class="card-title">Blogging Pipeline <strong id="blog-pct" style="color:var(--purple)">0%</strong></div>
+        <div class="g3">
+          <div class="tile"><div class="tile-lbl">Published This Month</div><div class="tile-val" id="blog-pub-month" style="color:var(--purple)">0</div><div class="tile-sub">target 4/month</div></div>
+          <div class="tile"><div class="tile-lbl">In Draft</div><div class="tile-val" id="blog-drafts" style="color:var(--amber)">0</div><div class="tile-sub">posts</div></div>
+          <div class="tile"><div class="tile-lbl">Ideas Banked</div><div class="tile-val" id="blog-ideas" style="color:var(--text2)">0</div><div class="tile-sub">in pipeline</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Content Calendar — This Month</div>
+        <div class="blog-calendar" id="blog-calendar"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Pipeline</div>
+        <div id="blog-pipeline"></div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <input class="inp" id="blog-new-title" placeholder="Post title or idea…" style="flex:1">
+          <select class="inp" id="blog-new-status" style="width:120px">
+            <option value="idea">Idea</option>
+            <option value="outline">Outline</option>
+            <option value="draft">Draft</option>
+            <option value="review">Review</option>
+            <option value="published">Published</option>
+          </select>
+          <button class="btn btn-gold" onclick="addBlogPost()">Add</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ════ HEALTH OS ════ -->
+    <div class="view" id="view-health">
+      <div class="card" style="border-left:3px solid var(--green)">
+        <div class="card-title">Health OS — Metabolic & Hormonal Recovery</div>
+        <div class="g4">
+          <div class="tile"><div class="tile-lbl">Testosterone</div><div class="tile-val" id="h-testo" style="color:var(--amber)">131</div><div class="tile-sub">ng/dL · target 200</div></div>
+          <div class="tile"><div class="tile-lbl">Triglycerides</div><div class="tile-val" id="h-tg" style="color:var(--red)">390</div><div class="tile-sub">mg/dL · target 160</div></div>
+          <div class="tile"><div class="tile-lbl">Fasting Insulin</div><div class="tile-val" id="h-ins" style="color:var(--red)">30</div><div class="tile-sub">μIU · target 9</div></div>
+          <div class="tile"><div class="tile-lbl">Recovery Score</div><div class="tile-val" id="h-recovery" style="color:var(--amber)">—%</div><div class="tile-sub">habit composite</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Bloodwork Markers — 45-Day Trajectory</div>
+        <div id="health-markers"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Exercise Rings — Today</div>
+        <div id="health-rings"></div>
+        <div class="g2" style="margin-top:10px">
+          <div>
+            <div style="font-size:10px;color:var(--text3);margin-bottom:4px;font-family:var(--font-mono)">Move (cal)</div>
+            <input class="inp" id="ring-move" type="number" placeholder="0">
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--text3);margin-bottom:4px;font-family:var(--font-mono)">Exercise (min)</div>
+            <input class="inp" id="ring-exercise" type="number" placeholder="0">
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--text3);margin-bottom:4px;font-family:var(--font-mono)">Stand (hrs)</div>
+            <input class="inp" id="ring-stand" type="number" placeholder="0">
+          </div>
+          <div>
+            <div style="font-size:10px;color:var(--text3);margin-bottom:4px;font-family:var(--font-mono)">Steps</div>
+            <input class="inp" id="ring-steps" type="number" placeholder="0">
+          </div>
+        </div>
+        <button class="btn btn-gold" style="margin-top:10px;width:100%" onclick="saveRings()">Save Rings</button>
+      </div>
+      <div class="card">
+        <div class="card-title">Sleep Log</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+          <input class="inp" id="slp-hrs" type="number" step="0.5" placeholder="Hours" style="width:90px">
+          <input class="inp" id="slp-quality" type="number" min="1" max="10" placeholder="Quality /10" style="width:110px">
+          <input class="inp" id="slp-note" placeholder="Note" style="flex:1">
+          <button class="btn btn-gold" onclick="logSleep()">Log</button>
+        </div>
+        <div id="health-sleep-log"></div>
+      </div>
+    </div>
+
+    <!-- ════ SEO & WEBSITE ════ -->
+    <div class="view" id="view-seo">
+      <div class="card" style="border-left:3px solid var(--amber)">
+        <div class="card-title">SEO & Website — Weekly Activity</div>
+        <div class="g3">
+          <div class="tile"><div class="tile-lbl">Domain Authority</div><div class="tile-val" id="seo-da" style="color:var(--amber)">—</div><div class="tile-sub">target 30+</div></div>
+          <div class="tile"><div class="tile-lbl">Organic Traffic</div><div class="tile-val" id="seo-traffic" style="color:var(--amber)">—</div><div class="tile-sub">monthly visits</div></div>
+          <div class="tile"><div class="tile-lbl">Tasks This Week</div><div class="tile-val" id="seo-tasks-done" style="color:var(--green)">0/5</div><div class="tile-sub">completed</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Weekly SEO Tasks</div>
+        <div id="seo-weekly-tasks"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">Keyword Tracking</div>
+        <div id="seo-keywords"></div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <input class="inp" id="seo-kw-inp" placeholder="Add keyword to track…" style="flex:1">
+          <button class="btn btn-gold" onclick="addKeyword()">Track</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Research Log</div>
+        <div id="seo-log" style="max-height:200px;overflow-y:auto;margin-bottom:10px"></div>
+        <div style="display:flex;gap:8px">
+          <input class="inp" id="seo-log-inp" placeholder="Research finding, competitor insight, or backlink opportunity…" style="flex:1">
+          <button class="btn btn-gold" onclick="logSEO()">Log</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ════ FAMILY & COMPANY ════ -->
+    <div class="view" id="view-family">
+      <div class="g2">
+        <div class="card" style="border-left:3px solid var(--red)">
+          <div class="card-title">Family — Daily Rituals</div>
+          <div id="family-rituals"></div>
+          <button class="btn btn-gold" style="width:100%;margin-top:12px" onclick="saveFamily()">Save</button>
+        </div>
+        <div class="card" style="border-left:3px solid var(--gold)">
+          <div class="card-title">CyberNeurix — Company Milestones</div>
+          <div id="company-milestones"></div>
+          <div style="display:flex;gap:8px;margin-top:10px">
+            <input class="inp" id="ms-inp" placeholder="Add milestone…" style="flex:1">
+            <button class="btn btn-gold" onclick="addMilestone()">Add</button>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Personal Growth — Homage Log</div>
+        <div style="margin-bottom:8px;font-size:12px;color:var(--text2);line-height:1.7;font-style:italic;padding:10px 12px;background:rgba(201,150,90,0.05);border-left:2px solid rgba(201,150,90,0.3);border-radius:0 6px 6px 0">
+          "The best homage is becoming the person she believed you could be."
+        </div>
+        <textarea class="inp" id="homage-log" rows="4" placeholder="One honest sentence — how you took care of yourself or moved forward today."></textarea>
+        <button class="btn btn-gold" style="margin-top:8px" onclick="saveHomage()">Save</button>
+        <div id="homage-history" style="margin-top:12px"></div>
+      </div>
+    </div>
+
+    <!-- ════ TRACKERS ════ -->
+    <div class="view" id="view-trackers">
+      <div class="card">
+        <div class="card-title">External Trackers <span style="font-family:var(--font-mono);font-size:9px;color:var(--text3);font-weight:400">live apps · GitHub Pages</span></div>
+        <div style="font-size:11px;color:var(--text3);margin-bottom:14px;line-height:1.6">These open in a new tab — each is its own standalone app with its own data store, separate from this Master OS.</div>
+        <div class="tracker-grid" id="tracker-grid"></div>
+      </div>
+    </div>
+
+    <!-- ════ WEEKLY COMMAND ════ -->
+    <div class="view" id="view-weekly">
+      <div class="card">
+        <div class="card-title">Weekly Command Center <strong id="wk-label" style="color:var(--gold)">—</strong></div>
+        <div class="g2" style="margin-bottom:16px">
+          <div class="week-review-card">
+            <div class="week-review-label">Single priority this week</div>
+            <textarea class="week-review-ta" id="wk-priority" rows="2" placeholder="The one thing that would make this week a win if nothing else happened…"></textarea>
+          </div>
+          <div class="week-review-card">
+            <div class="week-review-label">What carried forward from last week?</div>
+            <textarea class="week-review-ta" id="wk-carry" rows="2" placeholder="Unfinished work, open loops, things that slipped…"></textarea>
+          </div>
+        </div>
+        <div class="g2" style="margin-bottom:16px">
+          <div class="week-review-card">
+            <div class="week-review-label">What helped most?</div>
+            <textarea class="week-review-ta" id="wk-helped" rows="2" placeholder="The one condition, habit, or decision that drove the most output…"></textarea>
+          </div>
+          <div class="week-review-card">
+            <div class="week-review-label">What got in the way?</div>
+            <textarea class="week-review-ta" id="wk-blocked" rows="2" placeholder="Name the real obstacle, not a sanitised version…"></textarea>
+          </div>
+        </div>
+        <button class="btn btn-gold" style="width:100%" onclick="saveWeekly()">Save Weekly Review</button>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Week View — Planned vs Actual</div>
+        <div style="overflow-x:auto">
+          <div id="week-view-grid"></div>
+        </div>
+        <button class="btn btn-gold" style="margin-top:12px" onclick="saveWeekView()">Save Week</button>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Forecast — Hours This Week</div>
+        <div id="weekly-forecast"></div>
+      </div>
+    </div>
+
+  </div><!-- /content -->
+</div><!-- /app -->
+
+<div id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════
+// CONFIG
+// ═══════════════════════════════════════════
+const SUPA_URL = 'https://alxtlzxbjpxxdrpohnvb.supabase.co';
+const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFseHRsenhianB4eGRycG9obnZiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ0NTM3NTUsImV4cCI6MjA5MDAyOTc1NX0.7B41JEAgwt0LmubRQoq4csfTdH4J_I2DXUzHe7iGZkw';
+const ROW_ID = 'cnx_master_os_v1';
+const TABLE = 'tracker_data';
+const LS_KEY = 'cnx_master_v1';
+
+const ACADEMY_START = new Date('2026-06-05');
+const SA_START = new Date('2026-06-05');
+const TODAY = (() => { const d = new Date(new Date().toLocaleString('en-US', {timeZone:'Asia/Kolkata'})); d.setHours(0,0,0,0); return d; })();
+const TODAY_S = (() => { const d = new Date(new Date().toLocaleString('en-US', {timeZone:'Asia/Kolkata'})); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; })();
+const ACADEMY_DAY = Math.max(1, Math.round((TODAY - ACADEMY_START) / 86400000) + 1);
+const SA_DAY = Math.max(1, Math.round((TODAY - SA_START) / 86400000) + 1);
+const ACADEMY_DEADLINE = new Date('2026-07-07');
+const DAYS_TO_DEADLINE = Math.max(0, Math.ceil((ACADEMY_DEADLINE - TODAY) / 86400000));
+
+// ═══════════════════════════════════════════
+// STATIC DATA
+// ═══════════════════════════════════════════
+const DAILY_TASKS = [
+  {id:'smoothie',    label:'Morning smoothie', tag:'health'},
+  {id:'meds',        label:'All meds taken',   tag:'health'},
+  {id:'academy',     label:'Academy session',  tag:'work'},
+  {id:'exercise',    label:'45-min exercise',  tag:'health'},
+  {id:'no_sugar',    label:'Zero refined sugar', tag:'health'},
+  {id:'taper',       label:'Within taper target', tag:'health'},
+  {id:'wife_time',   label:'Quality wife time', tag:'personal'},
+  {id:'evening_close', label:'Evening close done', tag:'personal'},
+];
+
+const MEDS = [
+  {id:'adilip',  name:'Adilip 135',   when:'Morning with food'},
+  {id:'vitd',    name:'Vitamin D3',   when:'Morning, fatty meal'},
+  {id:'b12',     name:'Vitamin B12',  when:'Morning'},
+  {id:'megalis', name:'Megalis-20',   when:'As needed'},
+];
+
+const COMPETENCIES = [
+  {id:1,  name:'Cybersecurity Foundations',       phase:1},
+  {id:2,  name:'Networking Fundamentals',          phase:1},
+  {id:3,  name:'Linux Essentials',                 phase:1},
+  {id:4,  name:'Windows & PowerShell',             phase:1},
+  {id:5,  name:'Python & Automation',              phase:1},
+  {id:6,  name:'Cyber Threat Landscape & CTI',     phase:2},
+  {id:7,  name:'Footprinting & Recon',             phase:2},
+  {id:8,  name:'Vulnerability Assessment & ExP',   phase:2},
+  {id:9,  name:'Web, API & Mobile Security',       phase:2},
+  {id:10, name:'Network Pentest & Wireless',       phase:3},
+  {id:11, name:'Cloud & AWS Security',             phase:3},
+  {id:12, name:'SOC Fundamentals',                 phase:4},
+  {id:13, name:'SIEM Engineering & Detection',     phase:4},
+  {id:14, name:'Endpoint Security & XDR',          phase:4},
+  {id:15, name:'Incident Response & Forensics',    phase:5},
+];
+
+const ARCHETYPES = [
+  {key:'ppt',   label:'P', name:'PPT',       color:'var(--blue)'},
+  {key:'gloss', label:'G', name:'Glossary',  color:'var(--purple)'},
+  {key:'pre',   label:'R', name:'Pre-read',  color:'var(--green)'},
+  {key:'prequiz', label:'Q', name:'Pre-Quiz', color:'var(--amber)'},
+  {key:'postquiz', label:'A', name:'Post-Quiz', color:'var(--red)'},
+  {key:'lab',   label:'L', name:'Lab',       color:'var(--teal)'},
+];
+
+// Real lab activities from the ESecurityIn brochure — 4 per competency, 60 total, L01–L15 chained
+const LAB_ACTIVITIES = {
+  1:  ['Terminology exercise; Threat identification workshop', 'Security control mapping lab', 'Hashing & encryption exercises', 'Disk partitioning; File system exploration'],
+  2:  ['Packet flow visualization', 'Subnetting exercises', 'VLAN simulation lab', 'Wireshark packet analysis'],
+  3:  ['Linux navigation exercises', 'Permission escalation lab', 'Service hardening lab', 'Bash scripting project'],
+  4:  ['Windows process analysis', 'Registry investigation lab', 'AD enumeration lab', 'PowerShell automation lab'],
+  5:  ['Python scripting exercises', 'Log parsing lab', 'Port scanner development', 'Security tool mini-project'],
+  6:  ['Threat profiling exercise', 'MITRE mapping lab', 'Malware sandbox analysis', 'IOC correlation lab'],
+  7:  ['OSINT lab', 'Nmap scanning lab', 'DNS enumeration lab', 'Nessus / OpenVAS scanning'],
+  8:  ['Vulnerability assessment lab', 'Metasploit lab; Post-exploitation walkthrough', 'Linux / Windows privesc lab', 'Password auditing; Pivoting simulation'],
+  9:  ['HTTP packet inspection; OWASP exploitation lab', 'Session hijacking; Burp Suite testing lab', 'API testing lab; JWT exploitation lab', 'Mobile app analysis; APK reverse engineering'],
+  10: ['Enterprise scanning lab', 'Pivoting exercise', 'VPN assessment lab', 'Wireless attack simulation'],
+  11: ['AWS environment setup', 'IAM misconfiguration lab', 'Cloud logging lab', 'S3 exposure analysis'],
+  12: ['SOC workflow simulation', 'Log source analysis', 'Alert triage exercise', 'SOC reporting lab'],
+  13: ['SIEM architecture walkthrough', 'Correlation rule lab', 'Detection rule creation', 'Dashboard development'],
+  14: ['Endpoint investigation', 'XDR simulation lab', 'Threat hunting exercise', 'ATT&CK mapping lab; AI-assisted alert analysis; Prompt injection testing'],
+  15: ['Incident simulation; IR playbook execution', 'Disk forensics lab; Memory analysis lab', 'Timeline reconstruction; Chain-of-custody exercise', 'Dual-audience IR report writing'],
+};
+
+const LD_TOP10 = [
+  'Weekly content review — quality check all generated materials',
+  'Instructor catch-up — 30-min sync, blockers + next sprint',
+  'Learner feedback loop — review cohort pulse from last session',
+  'Competency generation session — 1 full competency today',
+  'Lab validation — ensure all lab exercises are technically sound',
+  'Assessment alignment — verify quiz maps to learning outcomes',
+  'Masterclass prep — slides, demo, and narrative locked',
+  'Platform upload — push completed materials to LMS',
+  'Industry alignment check — update tools/techniques list',
+  'Weekly L&D metrics — completion, engagement, quiz scores',
+];
+
+const SA_PHASES = [
+  {name:'Foundation',      range:[1,21]},
+  {name:'Architecture',    range:[22,49]},
+  {name:'Threat Modeling', range:[50,77]},
+  {name:'Risk & Compliance', range:[78,105]},
+  {name:'Implementation',  range:[106,133]},
+  {name:'Assessment',      range:[134,161]},
+  {name:'Capstone',        range:[162,187]},
+];
+
+const HEALTH_MARKERS = [
+  {id:'testo',  name:'Testosterone',   unit:'ng/dL', base:131, t45:200, t2m:300, t4m:500, up:true,  color:'var(--amber)'},
+  {id:'tg',     name:'Triglycerides',  unit:'mg/dL', base:390, t45:320, t2m:250, t4m:160, up:false, color:'var(--red)'},
+  {id:'ins',    name:'Fasting Insulin',unit:'μIU',   base:30,  t45:22,  t2m:15,  t4m:9,  up:false, color:'var(--red)'},
+  {id:'hba',    name:'HbA1c',          unit:'%',     base:6.3, t45:6.1, t2m:5.9, t4m:5.6, up:false, color:'var(--amber)'},
+  {id:'vitd',   name:'Vitamin D',      unit:'ng/mL', base:12,  t45:25,  t2m:40,  t4m:50,  up:true,  color:'var(--gold)'},
+];
+
+const CNIS_SPRINTS = [
+  {id:'s1', name:'Threat Intel Ingestion',     product:'RixTrace', status:'Done'},
+  {id:'s2', name:'Dark Web Crawler v1',         product:'RixTrace', status:'In Progress'},
+  {id:'s3', name:'Credential Leak Detection',   product:'RixTrace', status:'In Progress'},
+  {id:'s4', name:'Tor Proxy + .onion Routing',  product:'RixTrace', status:'In Progress'},
+  {id:'s5', name:'Telegram Monitoring',         product:'RixTrace', status:'Blocked'},
+  {id:'s6', name:'Deduplication Engine',        product:'RixTrace', status:'In Progress'},
+  {id:'s7', name:'NEURIX Scoring Engine',       product:'Scoring',  status:'Not Started'},
+  {id:'s8', name:'ERI Risk Calculation',        product:'Scoring',  status:'Not Started'},
+  {id:'s9', name:'AI Plugin Layer',             product:'AI',       status:'Not Started'},
+  {id:'s10',name:'RixOne Dashboard Core',       product:'RixOne',   status:'Not Started'},
+];
+
+const SEO_TASKS = [
+  'Publish 1 blog post with target keyword',
+  'Internal linking audit — connect 3 existing posts',
+  'Backlink outreach — contact 2 relevant sites',
+  'Google Search Console review — check impressions/CTR',
+  'Competitor content gap analysis — 30 min research',
+];
+
+const FAMILY_RITUALS = [
+  {id:'morning_connect', emoji:'☀', label:'Morning connection — 5 min before screens'},
+  {id:'no_phone_dinner', emoji:'📵', label:'Phone-free dinner together'},
+  {id:'share_win',       emoji:'✦', label:'Share one win or learning from the day'},
+  {id:'physical_touch',  emoji:'❤', label:'Physical affection — deliberate, not transactional'},
+  {id:'future_talk',     emoji:'🌅', label:'One sentence about a shared future plan'},
+];
+
+const WEEK_STREAMS = [
+  {id:'academy',    label:'Academy'},
+  {id:'rixtrace',   label:'RixTrace'},
+  {id:'sa_upskill', label:'SA Upskill'},
+  {id:'blogging',   label:'Blogging'},
+  {id:'health',     label:'Health/Exercise'},
+  {id:'family',     label:'Family Time'},
+];
+
+const FORECAST_TARGETS = {academy:14, rixtrace:6, sa_upskill:8, blogging:3, health:5, family:7};
+
+const PILLAR_DEFS = [
+  {id:'wellbeing', name:'Wellbeing',       icon:'◎', color:'var(--amber)',  sub:'Daily non-negotiables'},
+  {id:'academy',   name:'Academy L&D',     icon:'🎓', color:'var(--blue)',   sub:'Content pipeline'},
+  {id:'cnis',      name:'CNIS Build',      icon:'⚡', color:'var(--red)',    sub:'RixTrace & products'},
+  {id:'saupskill', name:'SA Upskill',      icon:'🎯', color:'var(--teal)',   sub:'187-day plan'},
+  {id:'blogging',  name:'Blogging',        icon:'✍', color:'var(--purple)', sub:'Content & SEO'},
+  {id:'health',    name:'Health OS',       icon:'🩺', color:'var(--green)',  sub:'Metabolic recovery'},
+  {id:'seo',       name:'SEO & Website',   icon:'🔍', color:'var(--amber)',  sub:'Weekly research'},
+  {id:'family',    name:'Family & Co',     icon:'❤', color:'var(--red)',    sub:'Rituals & milestones'},
+];
+
+const TRACKER_LINKS = [
+  {name:'CyberEd Tracker',      url:'https://kay887.github.io/CyberEd/',                 desc:'ESecurityIn Academy — 15 competencies, lab chain, content pipeline', icon:'🎓', color:'var(--blue)'},
+  {name:'Blogging Calendar',    url:'https://kay887.github.io/Blogging-calendar/',        desc:'Content calendar & publish pipeline',                                icon:'✍', color:'var(--purple)'},
+  {name:'SA Upskill — 187',     url:'https://kay887.github.io/Alls-SAupskill-187--/',     desc:'187-day Solutions Architect study tracker',                          icon:'🎯', color:'var(--teal)'},
+  {name:'Pers.Evol',            url:'https://kay887.github.io/Pers.Evol-v2/',             desc:'Personal evolution / wellbeing tracker',                             icon:'◎', color:'var(--amber)'},
+  {name:'Food Tracker',         url:'https://kay887.github.io/Food-tracker/',             desc:'Nutrition & meal logging',                                          icon:'🍽', color:'var(--green)'},
+  {name:'Master Tracker',       url:'https://kay887.github.io/Master-tracker/',           desc:'CNX Master Command tracker',                                        icon:'🗂', color:'var(--gold)'},
+];
+
+
+// ═══════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════
+let S = {};
+let _saveTimer = null;
+
+function lsGet(fb = {}) { try { const v = localStorage.getItem(LS_KEY); return v ? JSON.parse(v) : fb; } catch(e) { return fb; } }
+function lsSet() { try { localStorage.setItem(LS_KEY, JSON.stringify(S)); } catch(e) {} }
+function gd(path, fb) {
+  const parts = path.split('.');
+  let o = S;
+  for (const p of parts) { if (o == null) return fb; o = o[p]; }
+  return o === undefined ? fb : o;
+}
+function sd(path, val) {
+  const parts = path.split('.');
+  let o = S;
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (!o[parts[i]] || typeof o[parts[i]] !== 'object') o[parts[i]] = {};
+    o = o[parts[i]];
+  }
+  o[parts[parts.length - 1]] = val;
+  S.lastUpdated = Date.now();
+  if (!S._ts) S._ts = {};
+  S._ts[path] = Date.now();
+  lsSet();
+  schedSave();
+}
+function ensureDay() {
+  if (!S.daily || S.daily.date !== TODAY_S) {
+    S.daily = { date: TODAY_S, tasks: {}, meds: {}, nico: 0, mj: 0 };
+  }
+}
+
+// ═══════════════════════════════════════════
+// SUPABASE
+// ═══════════════════════════════════════════
+const hdrs = () => ({ 'Content-Type':'application/json', 'apikey':SUPA_KEY, 'Authorization':'Bearer '+SUPA_KEY, 'Prefer':'resolution=merge-duplicates' });
+function syncStrip(on) { document.getElementById('sync-strip').className = on ? 'active' : ''; }
+
+// Write a value into an object at a dot-path, creating intermediate objects as needed
+function setAtPath(obj, path, val) {
+  const parts = path.split('.');
+  let o = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (!o[parts[i]] || typeof o[parts[i]] !== 'object') o[parts[i]] = {};
+    o = o[parts[i]];
+  }
+  o[parts[parts.length - 1]] = val;
+}
+function getAtPath(obj, path) {
+  const parts = path.split('.');
+  let o = obj;
+  for (const p of parts) { if (o == null) return undefined; o = o[p]; }
+  return o;
+}
+
+// Field-level merge: for every path either side has touched, keep whichever
+// side wrote it more recently. Falls back to whole-blob if either side has
+// no _ts map (e.g. very first sync, or pre-merge legacy state).
+function mergeState(local, cloud) {
+  if (!local._ts && !cloud._ts) {
+    // Neither side has field-level history — fall back to old behavior
+    return (cloud.lastUpdated || 0) > (local.lastUpdated || 0) ? cloud : local;
+  }
+  const localTs = local._ts || {};
+  const cloudTs = cloud._ts || {};
+  const allPaths = new Set([...Object.keys(localTs), ...Object.keys(cloudTs)]);
+  // Start from whichever side has more total fields as the base (covers paths
+  // neither _ts map mentions, e.g. fields set before this merge logic existed)
+  const base = JSON.parse(JSON.stringify(
+    Object.keys(cloudTs).length >= Object.keys(localTs).length ? cloud : local
+  ));
+  const mergedTs = { ...localTs, ...cloudTs };
+  allPaths.forEach(path => {
+    const lt = localTs[path] || 0, ct = cloudTs[path] || 0;
+    if (lt === ct) return; // identical edit or already aligned, no-op
+    const winner = lt > ct ? local : cloud;
+    setAtPath(base, path, getAtPath(winner, path));
+    mergedTs[path] = Math.max(lt, ct);
+  });
+  base._ts = mergedTs;
+  base.lastUpdated = Math.max(local.lastUpdated || 0, cloud.lastUpdated || 0);
+  return base;
+}
+
+async function cloudLoad() {
+  try {
+    const r = await fetch(`${SUPA_URL}/rest/v1/${TABLE}?id=eq.${ROW_ID}&select=data`, { headers: hdrs() });
+    const rows = await r.json();
+    if (rows && rows.length && rows[0].data) {
+      const cloud = JSON.parse(rows[0].data);
+      const merged = mergeState(S, cloud);
+      const changed = JSON.stringify(merged) !== JSON.stringify(S);
+      S = merged; lsSet(); ensureDay();
+      if (changed) { renderAll(); schedSave(); } // push merged result back so both sides converge
+    }
+  } catch(e) {}
+}
+
+function schedSave() {
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(cloudSave, 1200);
+}
+
+async function cloudSave() {
+  S.lastUpdated = Date.now(); lsSet();
+  syncStrip(true);
+  try {
+    await fetch(`${SUPA_URL}/rest/v1/${TABLE}`, {
+      method: 'POST', headers: hdrs(),
+      body: JSON.stringify({ id: ROW_ID, data: JSON.stringify(S), updated_at: new Date().toISOString() })
+    });
+  } catch(e) {}
+  syncStrip(false);
+}
+
+// ═══════════════════════════════════════════
+// CLOCK
+// ═══════════════════════════════════════════
+function updateClock() {
+  const now = new Date();
+  const h = String(now.getHours()).padStart(2,'0'), m = String(now.getMinutes()).padStart(2,'0');
+  document.getElementById('live-clock').textContent = `${h}:${m}`;
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// ═══════════════════════════════════════════
+// NAVIGATION
+// ═══════════════════════════════════════════
+let currentView = 'brief';
+let currentMode = 'brief';
+
+function switchView(id) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('view-' + id)?.classList.add('active');
+  document.querySelector(`.nav-item[data-view="${id}"]`)?.classList.add('active');
+  currentView = id;
+  buildView(id);
+}
+
+function setMode(m) {
+  currentMode = m;
+  document.getElementById('mode-brief').classList.toggle('active', m === 'brief');
+  document.getElementById('mode-weekly').classList.toggle('active', m === 'weekly');
+  switchView(m === 'weekly' ? 'weekly' : 'brief');
+}
+
+function buildView(id) {
+  const fns = {
+    brief: buildBrief, dashboard: buildDashboard, wellbeing: buildWellbeing, academy: buildAcademy,
+    cnis: buildCNIS, saupskill: buildSA, blogging: buildBlogging,
+    health: buildHealth, seo: buildSEO, family: buildFamily, trackers: buildTrackers, weekly: buildWeekly
+  };
+  fns[id]?.();
+}
+
+// ═══════════════════════════════════════════
+// SCORES
+// ═══════════════════════════════════════════
+function calcDailyPct() {
+  ensureDay();
+  const t = DAILY_TASKS.filter(t => gd('daily.tasks.' + t.id, false)).length;
+  return Math.round(t / DAILY_TASKS.length * 100);
+}
+
+function calcAcademyPct() {
+  let done = 0, total = COMPETENCIES.length * ARCHETYPES.length;
+  COMPETENCIES.forEach(c => ARCHETYPES.forEach(a => { if (gd(`academy.c${c.id}.${a.key}`, false)) done++; }));
+  return Math.round(done / total * 100);
+}
+
+function calcCNISPct() {
+  const done = CNIS_SPRINTS.filter(s => (gd('cnis.sprint.' + s.id, s.status) === 'Done')).length;
+  return Math.round(done / CNIS_SPRINTS.length * 100);
+}
+
+function calcSAPct() { return Math.min(100, Math.round((SA_DAY - 1) / 187 * 100)); }
+
+function calcBlogPct() {
+  const posts = gd('blog.posts', []);
+  if (!posts.length) return 0;
+  const pub = posts.filter(p => p.status === 'published').length;
+  return Math.min(100, Math.round(pub / 4 * 100)); // 4/month target
+}
+
+function calcHealthPct() {
+  ensureDay();
+  const tasks = ['smoothie', 'meds', 'exercise', 'no_sugar', 'taper'];
+  const done = tasks.filter(t => gd('daily.tasks.' + t, false)).length;
+  return Math.round(done / tasks.length * 100);
+}
+
+function calcSEOPct() {
+  const done = SEO_TASKS.filter((_, i) => gd(`seo.tasks.${TODAY_S}.t${i}`, false)).length;
+  return Math.round(done / SEO_TASKS.length * 100);
+}
+
+function calcFamilyPct() {
+  const done = FAMILY_RITUALS.filter(r => gd(`family.${TODAY_S}.${r.id}`, false)).length;
+  return Math.round(done / FAMILY_RITUALS.length * 100);
+}
+
+function calcOverall() {
+  const scores = [calcDailyPct(), calcAcademyPct(), calcCNISPct(), calcSAPct(), calcBlogPct(), calcHealthPct(), calcSEOPct(), calcFamilyPct()];
+  const weights = [0.2, 0.2, 0.15, 0.1, 0.1, 0.15, 0.05, 0.05];
+  return Math.round(scores.reduce((a, s, i) => a + s * weights[i], 0));
+}
+
+function getPillarPct(id) {
+  const map = { wellbeing: calcDailyPct, academy: calcAcademyPct, cnis: calcCNISPct, saupskill: calcSAPct, blogging: calcBlogPct, health: calcHealthPct, seo: calcSEOPct, family: calcFamilyPct };
+  return map[id] ? map[id]() : 0;
+}
+
+// Days since a pillar last had a meaningful touch (log entry, save, or daily task)
+function daysSinceLastTouch(pillarId) {
+  const checkers = {
+    saupskill: () => { for (let i=0;i<14;i++){const d=new Date(TODAY);d.setDate(TODAY.getDate()-i);const ds=dateStr(d);if(gd(`sa.log.${ds}`,'')||gd(`sa.hours.${ds}`,0))return i;}return 14; },
+    blogging: () => { const posts=gd('blog.posts',[]);if(!posts.length)return 14;const dates=posts.map(p=>p.created||p.date).filter(Boolean);if(!dates.length)return 14;const latest=dates.sort().reverse()[0];const d=Math.round((TODAY-new Date(latest))/86400000);return Math.max(0,d); },
+    seo: () => { const logs=gd('seo.log',[]);if(!logs.length)return 14;const d=Math.round((TODAY-new Date(logs[0].date))/86400000);return Math.max(0,d); },
+    family: () => { for (let i=0;i<14;i++){const d=new Date(TODAY);d.setDate(TODAY.getDate()-i);const ds=dateStr(d);const any=FAMILY_RITUALS.some(r=>gd(`family.${ds}.${r.id}`,false));if(any)return i;}return 14; },
+    cnis: () => { const logs=gd('cnis.buildlog',[]);if(!logs.length)return 14;const d=Math.round((TODAY-new Date(logs[0].date))/86400000);return Math.max(0,d); },
+    academy: () => { for (let i=0;i<14;i++){const d=new Date(TODAY);d.setDate(TODAY.getDate()-i);const ds=dateStr(d);if(gd('academy.log',[]).some(l=>l.date===ds))return i;}return 14; },
+  };
+  return checkers[pillarId] ? checkers[pillarId]() : 0;
+}
+
+const NEGLECT_THRESHOLDS = { saupskill: 4, blogging: 10, seo: 9, family: 2, cnis: 5, academy: 3 };
+
+function getRisk() {
+  const health_pct = calcHealthPct();
+  const aca_pct = calcAcademyPct();
+  // Hard deadlines take absolute priority
+  if (DAYS_TO_DEADLINE <= 5 && aca_pct < 80) return { label: 'Academy deadline', sub: `${DAYS_TO_DEADLINE} days left, ${100-aca_pct}% remaining`, color: 'var(--red)' };
+  if (health_pct < 40) return { label: 'Health habits low', sub: 'Under 40% today — T recovery at risk', color: 'var(--red)' };
+  // Scan all 8 pillars for neglect, worst first
+  const neglectable = ['family','academy','cnis','saupskill','seo','blogging'];
+  let worst = null;
+  neglectable.forEach(id => {
+    const days = daysSinceLastTouch(id);
+    const threshold = NEGLECT_THRESHOLDS[id];
+    if (days >= threshold && (!worst || days - NEGLECT_THRESHOLDS[worst.id] > worst.over)) {
+      worst = { id, days, over: days - threshold };
+    }
+  });
+  if (worst) {
+    const labels = { family:'Family & Co untouched', academy:'Academy log stale', cnis:'CNIS build stalled', saupskill:'SA Upskill slipping', seo:'SEO research stale', blogging:'Blogging pipeline cold' };
+    return { label: labels[worst.id], sub: `No activity logged in ${worst.days} day${worst.days===1?'':'s'}`, color: worst.days >= NEGLECT_THRESHOLDS[worst.id]*1.5 ? 'var(--red)' : 'var(--amber)' };
+  }
+  if (!gd('daily.tasks.exercise', false)) return { label: 'No exercise yet', sub: 'Critical for T recovery trajectory', color: 'var(--amber)' };
+  return { label: 'No critical risk', sub: 'All systems nominal', color: 'var(--green)' };
+}
+
+function getNextMove() {
+  const risk = getRisk();
+  const moveByRisk = {
+    'Academy deadline': () => { const nextComp = COMPETENCIES.find(c => !ARCHETYPES.every(a => gd(`academy.c${c.id}.${a.key}`, false))); return { label: `Generate ${nextComp?.name || 'next competency'}`, sub: 'Academy deadline priority' }; },
+    'Health habits low': () => ({ label: 'Close one health non-negotiable', sub: 'Smallest unblocked habit first' }),
+    'Family & Co untouched': () => ({ label: 'One family ritual today', sub: 'Even 5 minutes counts' }),
+    'Academy log stale': () => ({ label: 'Log today\'s Academy session', sub: 'Keeps the streak honest' }),
+    'CNIS build stalled': () => ({ label: 'Log one CNIS build action', sub: 'Even a small fix counts' }),
+    'SA Upskill slipping': () => ({ label: 'Open SA Upskill, log 30 min', sub: 'Protect the 187-day streak' }),
+    'SEO research stale': () => ({ label: 'One SEO research entry', sub: 'Quick win, low cognitive cost' }),
+    'Blogging pipeline cold': () => ({ label: 'Move one post forward a stage', sub: 'Idea → outline counts' }),
+  };
+  if (moveByRisk[risk.label]) return moveByRisk[risk.label]();
+  if (!gd('daily.tasks.smoothie', false)) return { label: 'Morning smoothie', sub: 'Start the protocol' };
+  const eve = gd(`eve.${TODAY_S}.firstmove`, '');
+  if (eve) return { label: eve.slice(0, 45) + (eve.length > 45 ? '…' : ''), sub: 'From last night\'s close' };
+  return { label: 'Set tonight\'s first move', sub: 'Evening close → feeds tomorrow' };
+}
+
+// ═══════════════════════════════════════════
+// RENDER ALL
+// ═══════════════════════════════════════════
+function renderAll() {
+  ensureDay();
+  const overall = calcOverall();
+
+  // Topbar signals
+  const c = overall >= 70 ? 'var(--green)' : overall >= 40 ? 'var(--amber)' : 'var(--red)';
+  document.getElementById('sig-overall').textContent = overall + '%';
+  document.getElementById('sig-overall').style.color = c;
+  document.getElementById('sig-dot-overall').style.background = c;
+
+  const risk = getRisk();
+  document.getElementById('sig-risk').textContent = risk.label;
+  document.getElementById('sig-risk').style.color = risk.color;
+  document.getElementById('sig-dot-risk').style.background = risk.color;
+
+  const move = getNextMove();
+  document.getElementById('sig-next').textContent = move.label;
+
+  // Day badge
+  document.getElementById('day-badge').textContent = `Academy Day ${ACADEMY_DAY}`;
+
+  // Nav pcts
+  PILLAR_DEFS.forEach(p => {
+    const el = document.getElementById('nav-pct-' + p.id);
+    if (el) el.textContent = getPillarPct(p.id) + '%';
+  });
+
+  buildView(currentView);
+}
+
+// ═══════════════════════════════════════════
+// BUILD: MORNING BRIEF
+// ═══════════════════════════════════════════
+function buildBrief() {
+  const overall = calcOverall();
+  const C = 2 * Math.PI * 40;
+  const circle = document.getElementById('brief-ring-circle');
+  if (circle) { circle.style.strokeDashoffset = C * (1 - overall / 100); }
+  const pctEl = document.getElementById('brief-ring-pct');
+  if (pctEl) pctEl.textContent = overall + '%';
+
+  const now = new Date();
+  const dateEl = document.getElementById('brief-date');
+  if (dateEl) dateEl.textContent = now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' });
+
+  // First move from last night
+  const eve = gd(`eve.${TODAY_S}.firstmove`, '');
+  const fmEl = document.getElementById('brief-firstmove');
+  if (fmEl) { fmEl.textContent = eve || 'Set tonight\'s first move in Evening Close →'; fmEl.style.fontStyle = eve ? 'normal' : 'italic'; }
+
+  // Tags
+  const tags = document.getElementById('brief-tags');
+  if (tags) {
+    const daily = calcDailyPct();
+    tags.innerHTML = [
+      `<span class="tag ${daily === 100 ? 'badge-green' : 'badge-amber'}">${DAILY_TASKS.filter(t=>gd('daily.tasks.'+t.id,false)).length}/${DAILY_TASKS.length} tasks</span>`,
+      `<span class="tag badge-blue">Academy ${DAYS_TO_DEADLINE}d left</span>`,
+      `<span class="tag badge-gold">SA Day ${SA_DAY}</span>`,
+    ].join('');
+  }
+
+  // Signal cards
+  const daily = calcDailyPct();
+  const dn = DAILY_TASKS.filter(t => gd('daily.tasks.' + t.id, false)).length;
+  document.getElementById('sc-today-val').textContent = daily + '%';
+  document.getElementById('sc-today-sub').textContent = `${dn} of ${DAILY_TASKS.length} non-negotiables done`;
+
+  const risk = getRisk();
+  document.getElementById('sc-risk-val').textContent = risk.label;
+  document.getElementById('sc-risk-sub').textContent = risk.sub;
+  document.getElementById('sc-risk-val').style.color = risk.color;
+
+  const move = getNextMove();
+  document.getElementById('sc-move-val').textContent = move.label;
+  document.getElementById('sc-move-sub').textContent = move.sub;
+
+  // Pillar grid
+  const pg = document.getElementById('pillar-grid');
+  if (pg) {
+    pg.innerHTML = PILLAR_DEFS.map(p => {
+      const pct = getPillarPct(p.id);
+      const c = pct >= 70 ? 'var(--green)' : pct >= 40 ? 'var(--amber)' : 'var(--red)';
+      return `<div class="pillar-card" onclick="switchView('${p.id}')" style="border-left-color:${p.color}">
+        <div class="pillar-name">${p.icon} ${p.name}</div>
+        <div class="pillar-sub">${p.sub}</div>
+        <div class="pillar-pct" style="color:${c}">${pct}%</div>
+        <div class="pbar"><div class="pbar-fill" style="background:${p.color};width:${pct}%"></div></div>
+      </div>`;
+    }).join('');
+  }
+
+  // Quick log
+  const tl = document.getElementById('brief-daily-tasks');
+  if (tl) {
+    tl.innerHTML = DAILY_TASKS.map(t => {
+      const done = gd('daily.tasks.' + t.id, false);
+      return `<div onclick="toggleTask('${t.id}')" style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--rule);cursor:pointer">
+        <div class="chk${done?' on':''}">${done?'✓':''}</div>
+        <span style="flex:1;font-size:12px;color:${done?'var(--text3)':'var(--text)'}${done?';text-decoration:line-through':''}">${t.label}</span>
+        <span class="tag badge-${t.tag==='health'?'green':t.tag==='work'?'blue':'amber'}" style="font-size:8px">${t.tag}</span>
+      </div>`;
+    }).join('');
+  }
+
+  // Pre-fill evening close
+  const eveM = gd(`eve.${TODAY_S}.moved`, '');
+  const eveB = gd(`eve.${TODAY_S}.blocked`, '');
+  const eveFM = gd(`eve.${TODAY_S}.firstmove`, '');
+  const movedEl = document.getElementById('eve-moved');
+  const blockedEl = document.getElementById('eve-blocked');
+  const firstEl = document.getElementById('eve-firstmove');
+  if (movedEl) movedEl.value = eveM;
+  if (blockedEl) blockedEl.value = eveB;
+  if (firstEl) firstEl.value = eveFM;
+}
+
+// ═══════════════════════════════════════════
+// BUILD: DASHBOARD
+// ═══════════════════════════════════════════
+
+// Resolved hex/rgba palette — Chart.js renders to <canvas>, which can't read CSS custom properties,
+// so these mirror the :root tokens defined in <style> for visual consistency.
+const CHART_COLORS = {
+  gold: '#C9965A', goldHi: '#E8B068', text: '#E8EDF5', text2: '#8A94A6', text3: '#4A5060',
+  green: '#3DAA72', red: '#C85050', amber: '#D4953A', blue: '#4A7ED8', teal: '#2EA897', purple: '#7C58C8',
+  ink2: '#13151A', ink3: '#1A1D24', rule: '#2A2E38',
+};
+
+// One registry for all dashboard chart instances, so re-navigating to the tab
+// destroys old instances before redrawing on the same canvases (Chart.js throws
+// "Canvas is already in use" otherwise).
+const _dashCharts = {};
+function destroyDashChart(id) { if (_dashCharts[id]) { _dashCharts[id].destroy(); delete _dashCharts[id]; } }
+function chartFallbackNotice(canvasId) {
+  const canvas = document.getElementById(canvasId);
+  if (canvas && !canvas.dataset.fallbackShown) {
+    canvas.dataset.fallbackShown = '1';
+    canvas.outerHTML = `<div class="empty" id="${canvasId}">Chart library failed to load — check network connection.<br>(Chart.js CDN may be blocked)</div>`;
+  }
+}
+
+if (typeof Chart !== 'undefined') {
+  Chart.defaults.font.family = "'IBM Plex Mono', monospace";
+  Chart.defaults.color = CHART_COLORS.text3;
+}
+
+function makeLineChart(canvasId, labels, data, color, opts = {}) {
+  if (typeof Chart === 'undefined') return chartFallbackNotice(canvasId);
+  destroyDashChart(canvasId);
+  const ctx = document.getElementById(canvasId)?.getContext('2d');
+  if (!ctx) return;
+  const grad = ctx.createLinearGradient(0, 0, 0, 140);
+  grad.addColorStop(0, color + '40');
+  grad.addColorStop(1, color + '00');
+  _dashCharts[canvasId] = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets: [{
+      data, borderColor: color, backgroundColor: grad, fill: true,
+      tension: 0.35, pointRadius: 2, pointHoverRadius: 5,
+      pointBackgroundColor: CHART_COLORS.ink2, pointBorderColor: color, pointBorderWidth: 1.5,
+      borderWidth: 2,
+    }]},
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { intersect: false, mode: 'index' },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: CHART_COLORS.ink3, borderColor: CHART_COLORS.rule, borderWidth: 1,
+          titleColor: CHART_COLORS.text2, bodyColor: color, padding: 10, displayColors: false,
+          callbacks: opts.tooltipCallback || undefined,
+        },
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 9 } } },
+        y: { grid: { color: CHART_COLORS.rule }, ticks: { font: { size: 9 } }, min: 0, max: opts.yMax },
+      },
+    },
+  });
+}
+
+function makeHBarChart(canvasId, labels, data, colors, opts = {}) {
+  if (typeof Chart === 'undefined') return chartFallbackNotice(canvasId);
+  destroyDashChart(canvasId);
+  const ctx = document.getElementById(canvasId)?.getContext('2d');
+  if (!ctx) return;
+  _dashCharts[canvasId] = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets: [{ data, backgroundColor: colors, borderRadius: 4, barThickness: 16 }] },
+    options: {
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      onClick: opts.onClick ? (evt, els) => { if (els.length) opts.onClick(labels[els[0].index]); } : undefined,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: CHART_COLORS.ink3, borderColor: CHART_COLORS.rule, borderWidth: 1,
+          titleColor: CHART_COLORS.text2, bodyColor: CHART_COLORS.goldHi, padding: 10, displayColors: false,
+          callbacks: opts.tooltipCallback || undefined,
+        },
+      },
+      scales: {
+        x: { grid: { color: CHART_COLORS.rule }, ticks: { font: { size: 9 } }, min: 0, max: opts.xMax || 100 },
+        y: { grid: { display: false }, ticks: { font: { size: 10 }, color: CHART_COLORS.text } },
+      },
+    },
+  });
+}
+
+function buildDashboard() {
+  // Last 14 days of dates, oldest to newest
+  const days = Array.from({length:14}, (_,i) => { const d = new Date(TODAY); d.setDate(TODAY.getDate()-13+i); return d; });
+  const dateStrs = days.map(dateStr);
+  const dayLabels = days.map(d => d.getDate() + '/' + (d.getMonth()+1));
+
+  // Overall score series from existing streak.{date} data
+  const streakSeries = dateStrs.map(ds => gd(`streak.${ds}`, 0));
+  const todayOverall = calcOverall();
+  const avg14 = Math.round(streakSeries.reduce((a,v)=>a+v,0) / streakSeries.length);
+  const yesterday = streakSeries[streakSeries.length-2] || 0;
+  const trendDir = todayOverall > yesterday ? '▲' : todayOverall < yesterday ? '▼' : '·';
+  const trendColor = todayOverall > yesterday ? 'var(--green)' : todayOverall < yesterday ? 'var(--red)' : 'var(--text3)';
+
+  document.getElementById('db-overall-val').textContent = todayOverall + '%';
+  const trendLbl = document.getElementById('db-overall-trend-lbl');
+  if (trendLbl) { trendLbl.textContent = trendDir; trendLbl.style.color = trendColor; }
+  document.getElementById('db-avg-val').textContent = avg14 + '%';
+  document.getElementById('db-deadline-val').textContent = DAYS_TO_DEADLINE;
+
+  // Academy velocity — competencies fully completed per day, derived from real toggle data
+  const compDoneToday = COMPETENCIES.filter(c => ARCHETYPES.every(a => gd(`academy.c${c.id}.${a.key}`, false))).length;
+  const veloEl = document.getElementById('db-velocity-val');
+  if (veloEl) veloEl.textContent = DAYS_TO_DEADLINE > 0 ? (compDoneToday / Math.max(1, ACADEMY_DAY)).toFixed(2) + '/day' : '—';
+
+  // Trend chart — overall score
+  makeLineChart('db-trend-chart', dayLabels, streakSeries, CHART_COLORS.gold, {
+    yMax: 100,
+    tooltipCallback: { label: (c) => `Overall: ${c.parsed.y}%` },
+  });
+
+  // SA hours/day chart
+  const saSeries = dateStrs.map(ds => parseFloat(gd(`sa.hours.${ds}`, 0) || 0));
+  makeLineChart('db-sa-chart', dayLabels, saSeries, CHART_COLORS.teal, {
+    yMax: Math.max(3, Math.ceil(Math.max(...saSeries))),
+    tooltipCallback: { label: (c) => `${c.parsed.y}h studied` },
+  });
+
+  // All 8 pillars as a horizontal bar chart, denser than the pillar-grid cards, clickable
+  const pillarLabels = PILLAR_DEFS.map(p => p.icon + ' ' + p.name);
+  const pillarData = PILLAR_DEFS.map(p => getPillarPct(p.id));
+  const pillarColors = pillarData.map(pct => pct >= 70 ? CHART_COLORS.green : pct >= 40 ? CHART_COLORS.amber : CHART_COLORS.red);
+  makeHBarChart('db-pillar-chart', pillarLabels, pillarData, pillarColors, {
+    xMax: 100,
+    onClick: (label) => { const p = PILLAR_DEFS.find(p => label.includes(p.name)); if (p) switchView(p.id); },
+    tooltipCallback: { label: (c) => `${c.parsed.x}% complete — click bar to open` },
+  });
+
+  // Health markers — baseline to 45-day target progress
+  const healthLabels = HEALTH_MARKERS.map(m => m.name);
+  const healthData = HEALTH_MARKERS.map(m => {
+    const actual = gd(`health.t45.${m.id}`, null);
+    const cur = actual !== null ? actual : m.base;
+    return Math.max(0, Math.min(100, Math.round(m.up ? (cur-m.base)/(m.t45-m.base)*100 : (m.base-cur)/(m.base-m.t45)*100)));
+  });
+  const healthColorMap = { 'var(--amber)': CHART_COLORS.amber, 'var(--red)': CHART_COLORS.red, 'var(--gold)': CHART_COLORS.gold };
+  const healthColors = HEALTH_MARKERS.map(m => healthColorMap[m.color] || CHART_COLORS.text2);
+  makeHBarChart('db-health-chart', healthLabels, healthData, healthColors, {
+    xMax: 100,
+    tooltipCallback: { label: (c) => `${c.parsed.x}% to 45-day target` },
+  });
+
+  // Forecast vs actual, this week — kept as lightweight HTML bars, a chart adds no real value here
+  const wkKey = getWkKey();
+  const forecastBars = document.getElementById('db-forecast-bars');
+  if (forecastBars) {
+    const labels = {academy:'Academy',rixtrace:'RixTrace',sa_upskill:'SA',blogging:'Blog',health:'Health',family:'Family'};
+    const colors = {academy:'var(--blue)',rixtrace:'var(--red)',sa_upskill:'var(--teal)',blogging:'var(--purple)',health:'var(--green)',family:'var(--amber)'};
+    forecastBars.innerHTML = Object.entries(FORECAST_TARGETS).map(([key, target]) => {
+      const actual = gd(`forecast.${wkKey}.${key}`, 0);
+      const pct = Math.min(100, Math.round(actual/target*100));
+      return `<div class="dash-bar-row">
+        <span style="width:60px;font-size:10px;color:var(--text2);flex-shrink:0">${labels[key]}</span>
+        <div class="dash-bar-track"><div class="dash-bar-fill" style="width:${pct}%;background:${colors[key]}"></div></div>
+        <span style="font-family:var(--font-mono);font-size:9px;color:var(--text3);width:42px;text-align:right;flex-shrink:0">${actual}/${target}h</span>
+      </div>`;
+    }).join('');
+  }
+
+  // Streak heatmap — same 14 days, denser grid than the wellbeing tab's row
+  const heat = document.getElementById('db-streak-heat');
+  if (heat) heat.innerHTML = days.map((d, i) => {
+    const pct = streakSeries[i];
+    const isT = dateStrs[i] === TODAY_S;
+    const bg = pct >= 70 ? 'var(--green)' : pct >= 40 ? 'var(--amber)' : pct > 0 ? 'rgba(200,80,80,0.4)' : 'var(--ink4)';
+    return `<div class="heat-cell" title="${dateStrs[i]}: ${pct}%" style="background:${bg};border:1px solid ${isT?'var(--gold)':'transparent'}"></div>`;
+  }).join('');
+}
+
+// ═══════════════════════════════════════════
+// BUILD: WELLBEING
+// ═══════════════════════════════════════════
+function buildWellbeing() {
+  ensureDay();
+  // Tasks
+  const taskDone = DAILY_TASKS.filter(t => gd('daily.tasks.' + t.id, false)).length;
+  const taskPct = Math.round(taskDone / DAILY_TASKS.length * 100);
+  const wbPct = document.getElementById('wb-task-pct');
+  if (wbPct) wbPct.textContent = taskPct + '%';
+  const wbT = document.getElementById('wb-tasks');
+  if (wbT) wbT.innerHTML = DAILY_TASKS.map(t => {
+    const done = gd('daily.tasks.' + t.id, false);
+    return `<div onclick="toggleTask('${t.id}')" style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--rule);cursor:pointer">
+      <div class="chk${done?' on':''}">${done?'✓':''}</div>
+      <span style="flex:1;font-size:12px;color:${done?'var(--text3)':'var(--text)'}${done?';text-decoration:line-through':''}">${t.label}</span>
+    </div>`;
+  }).join('');
+
+  // Meds
+  const medDone = MEDS.filter(m => gd('daily.meds.' + m.id, false)).length;
+  const wbMP = document.getElementById('wb-med-pct');
+  if (wbMP) wbMP.textContent = Math.round(medDone / MEDS.length * 100) + '%';
+  const wbM = document.getElementById('wb-meds');
+  if (wbM) wbM.innerHTML = MEDS.map(m => {
+    const done = gd('daily.meds.' + m.id, false);
+    return `<div onclick="toggleMed('${m.id}')" style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--rule);cursor:pointer">
+      <div class="chk${done?' on':''}">${done?'✓':''}</div>
+      <div style="flex:1"><div style="font-size:12px;color:${done?'var(--text3)':'var(--text)'}${done?';text-decoration:line-through':''}">${m.name}</div><div style="font-size:10px;color:var(--text3)">${m.when}</div></div>
+    </div>`;
+  }).join('');
+
+  // Taper
+  const wbTa = document.getElementById('wb-taper');
+  const nico = gd('daily.nico', 0);
+  const mj = gd('daily.mj', 0);
+  if (wbTa) wbTa.innerHTML = `
+    <div class="g2">
+      <div class="tile" style="text-align:center">
+        <div class="tile-lbl">🚬 Rollies today</div>
+        <div class="tile-val" style="color:${nico<=3?'var(--green)':'var(--red)'};font-size:32px">${nico}</div>
+        <div style="display:flex;gap:6px;justify-content:center;margin-top:8px">
+          <button onclick="adjSub('nico',1)" style="width:36px;height:36px;border-radius:7px;border:none;background:rgba(200,80,80,0.15);color:var(--red);font-size:18px;cursor:pointer">+</button>
+          <button onclick="adjSub('nico',-1)" style="width:36px;height:36px;border-radius:7px;border:none;background:var(--ink3);color:var(--text2);font-size:18px;cursor:pointer">−</button>
+        </div>
+        <div style="font-size:10px;color:var(--text3);margin-top:4px">target ≤3</div>
+      </div>
+      <div class="tile" style="text-align:center">
+        <div class="tile-lbl">🌿 MJ today</div>
+        <div class="tile-val" style="color:${mj<=1?'var(--green)':'var(--red)'};font-size:32px">${mj}</div>
+        <div style="display:flex;gap:6px;justify-content:center;margin-top:8px">
+          <button onclick="adjSub('mj',1)" style="width:36px;height:36px;border-radius:7px;border:none;background:rgba(200,80,80,0.15);color:var(--red);font-size:18px;cursor:pointer">+</button>
+          <button onclick="adjSub('mj',-1)" style="width:36px;height:36px;border-radius:7px;border:none;background:var(--ink3);color:var(--text2);font-size:18px;cursor:pointer">−</button>
+        </div>
+        <div style="font-size:10px;color:var(--text3);margin-top:4px">target ≤1</div>
+      </div>
+    </div>`;
+
+  // Streak
+  const streak = document.getElementById('wb-streak');
+  if (streak) {
+    streak.innerHTML = Array.from({length:14}, (_,i) => {
+      const d = new Date(TODAY); d.setDate(TODAY.getDate()-13+i);
+      const ds = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+      const pct = gd(`streak.${ds}`, 0);
+      const isT = ds === TODAY_S;
+      const bg = pct >= 70 ? 'rgba(61,170,114,0.2)' : pct > 0 ? 'rgba(212,149,58,0.15)' : 'var(--ink3)';
+      return `<div style="width:32px;height:40px;border-radius:6px;background:${bg};border:1px solid ${isT?'var(--gold)':'var(--rule)'};display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px">
+        <div style="font-family:var(--font-mono);font-size:9px;color:${pct>0?'var(--green)':'var(--text3)'}">${pct>0?pct+'%':'·'}</div>
+        <div style="font-size:7px;color:var(--text3)">${d.getDate()}</div>
+      </div>`;
+    }).join('');
+  }
+
+  // Journal
+  const jQ = document.getElementById('wb-journal-questions');
+  if (jQ) {
+    const motherQuestions = [
+      'Did you eat properly today?',
+      'Are you sleeping enough, or just telling me you are?',
+      "What's actually worrying you that you haven't said out loud?",
+      'Did you take a moment for yourself today, or was it all for everyone else?',
+      'Is anyone taking care of you the way you take care of them?',
+    ];
+    const dayIndex = Math.floor(TODAY.getTime() / 86400000) % motherQuestions.length;
+    const prompts = [
+      {id:'q1', label: motherQuestions[dayIndex]},
+      {id:'q2', label:'What moved forward today, specifically?'},
+      {id:'q3', label:'What needs attention tomorrow?'},
+    ];
+    jQ.innerHTML = prompts.map(p => `<div style="margin-bottom:12px">
+      <div style="font-size:11px;color:var(--gold);font-style:italic;margin-bottom:5px">${p.label}</div>
+      <textarea class="inp" id="wb-j-${p.id}" rows="2" style="min-height:52px;resize:none" placeholder="Write freely…">${gd(`wb.journal.${TODAY_S}.${p.id}`, '')}</textarea>
+    </div>`).join('');
+  }
+}
+
+// ═══════════════════════════════════════════
+// BUILD: ACADEMY
+// ═══════════════════════════════════════════
+function buildAcademy() {
+  const pct = calcAcademyPct();
+  const compDone = COMPETENCIES.filter(c => ARCHETYPES.every(a => gd(`academy.c${c.id}.${a.key}`, false))).length;
+  const el = id => document.getElementById(id);
+  el('aca-overall-pct').textContent = pct + '%';
+  el('aca-comp-done').textContent = compDone + '/15';
+  el('aca-days-left').textContent = DAYS_TO_DEADLINE;
+  el('aca-today-target').textContent = DAYS_TO_DEADLINE > 0 ? Math.ceil((15 - compDone) / DAYS_TO_DEADLINE) : '!';
+  el('aca-pbar').style.width = pct + '%';
+
+  // Top 10
+  const ld = document.getElementById('ld-top10');
+  if (ld) ld.innerHTML = LD_TOP10.map((item, i) => {
+    const done = gd(`ld.top10.${i}`, false);
+    return `<div class="ld-item${done?' done':''}" onclick="toggleLD(${i})">
+      <div class="chk${done?' on':''}">${done?'✓':''}</div>
+      <div class="ld-item-num">${String(i+1).padStart(2,'0')}</div>
+      <div class="ld-item-name">${item}</div>
+    </div>`;
+  }).join('');
+
+  // Pipeline
+  const pipeline = document.getElementById('academy-pipeline');
+  if (pipeline) {
+    pipeline.innerHTML = COMPETENCIES.map(c => {
+      const allDone = ARCHETYPES.every(a => gd(`academy.c${c.id}.${a.key}`, false));
+      const doneCt = ARCHETYPES.filter(a => gd(`academy.c${c.id}.${a.key}`, false)).length;
+      const expanded = gd(`academy.expand.${c.id}`, false);
+      const labActs = LAB_ACTIVITIES[c.id] || [];
+      const labDoneCt = labActs.filter((_, i) => gd(`academy.c${c.id}.labact.${i}`, false)).length;
+      return `<div>
+        <div class="content-row" onclick="toggleAcaExpand(${c.id})">
+          <div class="chk${allDone?' on':''}" style="pointer-events:none">${allDone?'✓':''}</div>
+          <div class="content-row-name" style="color:${allDone?'var(--text3)':'var(--text)'}"><strong style="font-family:var(--font-mono);color:var(--text3);margin-right:6px;font-size:10px">${String(c.id).padStart(2,'0')}</strong>${c.name}</div>
+          <div class="arch-dots">
+            ${ARCHETYPES.map(a => {
+              const done = gd(`academy.c${c.id}.${a.key}`, false);
+              const onclick = a.key === 'lab' ? `event.stopPropagation();toggleAcaExpand(${c.id})` : `event.stopPropagation();toggleArch(${c.id},'${a.key}')`;
+              return `<div class="arch-dot${done?' done':''}" title="${a.name}${a.key==='lab'?` — ${labDoneCt}/4 activities`:''}" onclick="${onclick}" style="${done?`background:${a.color};border-color:transparent`:''}"></div>`;
+            }).join('')}
+          </div>
+          <div class="content-row-meta">${doneCt}/${ARCHETYPES.length}</div>
+        </div>
+        ${expanded ? `<div style="padding:8px 0 12px 30px;border-bottom:1px solid var(--rule)">
+          <div style="font-family:var(--font-mono);font-size:9px;letter-spacing:1px;text-transform:uppercase;color:var(--text3);margin-bottom:8px">L${String(c.id).padStart(2,'0')} — 4 chained lab activities</div>
+          ${labActs.map((act, i) => {
+            const done = gd(`academy.c${c.id}.labact.${i}`, false);
+            return `<div onclick="event.stopPropagation();toggleLabActivity(${c.id},${i})" style="display:flex;align-items:center;gap:9px;padding:6px 0;cursor:pointer">
+              <div class="chk${done?' on':''}" style="width:15px;height:15px">${done?'✓':''}</div>
+              <span style="font-size:11px;color:${done?'var(--text3)':'var(--text2)'}${done?';text-decoration:line-through':''}">Lab ${i+1} — ${act}</span>
+            </div>`;
+          }).join('')}
+        </div>` : ''}
+      </div>`;
+    }).join('');
+  }
+
+  // Masterclass log
+  const logs = gd('academy.log', []);
+  const logEl = document.getElementById('aca-masterclass-log');
+  if (logEl) logEl.innerHTML = logs.length ? logs.slice(0, 8).map(l =>
+    `<div style="padding:7px 0;border-bottom:1px solid var(--rule);font-size:12px;color:var(--text2);line-height:1.5"><span style="font-family:var(--font-mono);font-size:9px;color:var(--text3);margin-right:8px">${l.date}</span>${l.text}</div>`
+  ).join('') : '<div class="empty">No logs yet. Log masterclass topics, catch-up notes, or demo prep.</div>';
+}
+
+// ═══════════════════════════════════════════
+// BUILD: CNIS
+// ═══════════════════════════════════════════
+function buildCNIS() {
+  const pct = calcCNISPct();
+  document.getElementById('cnis-overall-pct').textContent = pct + '%';
+
+  const rixDone = CNIS_SPRINTS.filter(s => s.product === 'RixTrace' && gd('cnis.sprint.' + s.id, s.status) === 'Done').length;
+  const rixTotal = CNIS_SPRINTS.filter(s => s.product === 'RixTrace').length;
+  document.getElementById('cnis-rix-pct').textContent = Math.round(rixDone/rixTotal*100) + '%';
+  document.getElementById('cnis-rxone-pct').textContent = CNIS_SPRINTS.filter(s=>s.product==='RixOne'&&gd('cnis.sprint.'+s.id,s.status)==='Done').length > 0 ? '14%' : '0%';
+  document.getElementById('cnis-ai-pct').textContent = gd('cnis.ai.pct', 0) + '%';
+
+  // Sprint board
+  const board = document.getElementById('cnis-sprint-board');
+  const stages = ['Not Started','In Progress','Blocked','Done'];
+  const stageCols = {'Not Started':'var(--text3)','In Progress':'var(--amber)','Blocked':'var(--red)','Done':'var(--green)'};
+  if (board) {
+    board.innerHTML = stages.map(stage => {
+      const sprints = CNIS_SPRINTS.filter(s => gd('cnis.sprint.' + s.id, s.status) === stage);
+      return `<div class="sprint-col">
+        <div class="sprint-col-hdr"><div style="width:7px;height:7px;border-radius:50%;background:${stageCols[stage]}"></div><span style="color:${stageCols[stage]}">${stage}</span></div>
+        ${sprints.map(s => `<div class="sprint-item" onclick="cycleSprint('${s.id}')">
+          <div class="sprint-item-name">${s.name}</div>
+          <div class="sprint-item-meta">${s.product}</div>
+        </div>`).join('')}
+        ${!sprints.length ? '<div style="font-size:10px;color:var(--text3);padding:8px 0">—</div>' : ''}
+      </div>`;
+    }).join('');
+  }
+
+  // Scoring engine — real NEURIX v3.0 architecture, Blueprint v3.0 "The Backbone"
+  const scoring = document.getElementById('cnis-scoring');
+  const scoringLayers = [
+    {n:'Phase 0 — Hybrid Scoring Spec', desc:'v1.1 locked · hygiene pre-compression, Brier normalisation'},
+    {n:'Phase 0.5 — Mathematical Foundation', desc:'Lambda values from 20 CVEs · sector multiplier Bayesian posteriors'},
+    {n:'Phase 1 — SIGNALS / evidence.py', desc:'EvidenceObject (18 fields) · 52 collector adapters · COLLECTOR_CONFIDENCE_MAP'},
+    {n:'Phase 1.5 — SectorConfig', desc:'Sole container for sector-pluggable values · 16 sectors unified'},
+    {n:'Phase 2 — Graph Engine', desc:'Scenario path construction · max() over paths (path-dominated scoring)'},
+    {n:'Phase 3 — Verification Layer', desc:'Active/passive feasibility enum · 0.51 passive ceiling, override logic'},
+    {n:'Phase 4 — Confidence Models', desc:'Multiplicative AND + noisy-OR, sector-selectable simultaneously'},
+    {n:'Phase 5 — Path Threshold Calibration', desc:'0.35 provisional threshold · F1-derived validation'},
+    {n:'Phase 6 — Compliance/CTI Integration', desc:'compliance_mapper.py + CTI threat multiplier (×1.5 cap)'},
+    {n:'Phase 7 — Report Integration', desc:'explainability.py + vapt_verdict.py · client-facing synthesis'},
+  ];
+  if (scoring) scoring.innerHTML = scoringLayers.map((l, i) => {
+    const done = gd(`cnis.scoring.layer.${i}`, false);
+    return `<div onclick="toggleScoringLayer(${i})" style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--rule);cursor:pointer">
+      <div class="chk${done?' on':''}">${done?'✓':''}</div>
+      <div style="flex:1"><div style="font-size:12px;color:${done?'var(--text3)':'var(--text)'}${done?';text-decoration:line-through':''}">${l.n}</div><div style="font-size:10px;color:var(--text3)">${l.desc}</div></div>
+      <span class="tag badge-${done?'green':'amber'}" style="font-size:8px">${done?'Done':'Pending'}</span>
+    </div>`;
+  }).join('');
+
+  document.getElementById('cnis-score-pct').textContent = Math.round(scoringLayers.filter((_,i)=>gd(`cnis.scoring.layer.${i}`,false)).length/scoringLayers.length*100) + '%';
+
+
+  // Build log
+  const logs = gd('cnis.buildlog', []);
+  const logEl = document.getElementById('cnis-build-log');
+  if (logEl) logEl.innerHTML = logs.length ? logs.slice(0,10).map(l =>
+    `<div style="padding:7px 0;border-bottom:1px solid var(--rule);font-size:12px;color:var(--text2);line-height:1.5"><span style="font-family:var(--font-mono);font-size:9px;color:var(--text3);margin-right:8px">${l.date}</span>${l.text}</div>`
+  ).join('') : '<div class="empty">Nothing logged yet. What did you build today?</div>';
+}
+
+// ═══════════════════════════════════════════
+// BUILD: SA UPSKILL
+// ═══════════════════════════════════════════
+function buildSA() {
+  const phase = SA_PHASES.find(p => SA_DAY >= p.range[0] && SA_DAY <= p.range[1]) || SA_PHASES[SA_PHASES.length-1];
+  document.getElementById('sa-day-lbl').textContent = `Day ${SA_DAY} / 187`;
+  document.getElementById('sa-phase-name').textContent = phase.name;
+  document.getElementById('sa-phase-days').textContent = `Days ${phase.range[0]}–${phase.range[1]}`;
+  document.getElementById('sa-pct').textContent = calcSAPct() + '%';
+
+  // Hours this week
+  let wkHrs = 0;
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(TODAY); d.setDate(TODAY.getDate() - i);
+    const ds = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    wkHrs += parseFloat(gd(`sa.hours.${ds}`, 0) || 0);
+  }
+  document.getElementById('sa-hrs-wk').textContent = wkHrs.toFixed(1) + 'h';
+
+  // Pre-fill today
+  const logEl = document.getElementById('sa-log-today');
+  const hrsEl = document.getElementById('sa-hrs-today');
+  const noteEl = document.getElementById('sa-note-today');
+  if (logEl) logEl.value = gd(`sa.log.${TODAY_S}`, '');
+  if (hrsEl) hrsEl.value = gd(`sa.hours.${TODAY_S}`, '');
+  if (noteEl) noteEl.value = gd(`sa.note.${TODAY_S}`, '');
+
+  // Heatmap
+  const hmap = document.getElementById('sa-heatmap');
+  if (hmap) hmap.innerHTML = Array.from({length:14}, (_,i) => {
+    const d = new Date(TODAY); d.setDate(TODAY.getDate()-13+i);
+    const ds = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    const hrs = parseFloat(gd(`sa.hours.${ds}`, 0) || 0);
+    const c = hrs >= 2 ? 'var(--teal)' : hrs >= 1 ? 'rgba(46,168,151,0.4)' : 'var(--ink3)';
+    const isT = ds === TODAY_S;
+    return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:3px">
+      <div style="width:100%;height:32px;border-radius:5px;background:${c};border:1px solid ${isT?'var(--gold)':'transparent'}" title="${ds}: ${hrs}h"></div>
+      <div style="font-size:8px;color:var(--text3);font-family:var(--font-mono)">${d.getDate()}</div>
+    </div>`;
+  }).join('');
+}
+
+// ═══════════════════════════════════════════
+// BUILD: BLOGGING
+// ═══════════════════════════════════════════
+function buildBlogging() {
+  const posts = gd('blog.posts', []);
+  const pubMonth = posts.filter(p => p.status === 'published' && p.date && p.date.startsWith(TODAY_S.slice(0,7))).length;
+  const drafts = posts.filter(p => p.status === 'draft').length;
+  const ideas = posts.filter(p => p.status === 'idea').length;
+
+  document.getElementById('blog-pct').textContent = calcBlogPct() + '%';
+  document.getElementById('blog-pub-month').textContent = pubMonth;
+  document.getElementById('blog-drafts').textContent = drafts;
+  document.getElementById('blog-ideas').textContent = ideas;
+
+  // Calendar
+  const now = new Date(), yr = now.getFullYear(), mo = now.getMonth();
+  const cal = document.getElementById('blog-calendar');
+  if (cal) {
+    const offset = (new Date(yr,mo,1).getDay()+6)%7;
+    const daysInMonth = new Date(yr,mo+1,0).getDate();
+    let html = '';
+    for (let i = 0; i < offset; i++) html += '<div></div>';
+    for (let d = 1; d <= daysInMonth; d++) {
+      const ds = `${yr}-${String(mo+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const hasPost = posts.some(p => p.date === ds && p.status === 'published');
+      const isToday = ds === TODAY_S;
+      html += `<div class="bc-day${hasPost?' has-post':''}${isToday?' today':''}">${d}${hasPost?'<br>✓':''}</div>`;
+    }
+    cal.innerHTML = html;
+  }
+
+  // Pipeline
+  const pipe = document.getElementById('blog-pipeline');
+  if (pipe) {
+    pipe.innerHTML = posts.length ? posts.map((p, i) => {
+      const stColors = {idea:'var(--text3)',outline:'var(--amber)',draft:'var(--blue)',review:'var(--purple)',published:'var(--green)'};
+      return `<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--rule)">
+        <div style="flex:1;font-size:12px;color:var(--text)">${p.title}</div>
+        <span class="tag" style="background:${stColors[p.status]}18;color:${stColors[p.status]};border-color:${stColors[p.status]}44">${p.status}</span>
+        <button onclick="cycleBlogStatus(${i})" style="background:transparent;border:1px solid var(--rule);border-radius:5px;color:var(--text3);font-size:10px;padding:3px 8px;cursor:pointer">→</button>
+      </div>`;
+    }).join('') : '<div class="empty">No posts in pipeline. Add your first post above.</div>';
+  }
+}
+
+// ═══════════════════════════════════════════
+// BUILD: HEALTH
+// ═══════════════════════════════════════════
+function buildHealth() {
+  // Markers
+  const markers = document.getElementById('health-markers');
+  if (markers) markers.innerHTML = HEALTH_MARKERS.map(m => {
+    const actual45 = gd(`health.t45.${m.id}`, null);
+    const onTrack = actual45 ? (m.up ? actual45 >= m.t45 * 0.85 : actual45 <= m.t45 * 1.15) : null;
+    const pct = actual45 ? Math.min(100, Math.round(m.up ? (actual45-m.base)/(m.t45-m.base)*100 : (m.base-actual45)/(m.base-m.t45)*100)) : 0;
+    return `<div class="marker-row">
+      <div class="marker-name">${m.name} <span style="font-family:var(--font-mono);font-size:9px;color:var(--text3)">${m.unit}</span></div>
+      <div class="marker-val" style="color:${m.color}">${m.base} <span style="font-size:10px;color:var(--text3)">baseline</span></div>
+      <div>
+        <input type="number" step="0.1" value="${actual45||''}" placeholder="${m.t45}" 
+          style="width:70px;background:var(--ink3);border:1px solid var(--rule);border-radius:5px;color:var(--text);padding:4px 7px;font-size:11px;outline:none;text-align:center;font-family:var(--font-mono)"
+          onblur="saveMarker('${m.id}',this.value)">
+      </div>
+      <div class="marker-status">
+        ${onTrack===null?`<span style="color:var(--text3);font-size:10px">target ${m.t45}</span>`:
+        `<span style="color:${onTrack?'var(--green)':'var(--amber)'};font-size:10px">${onTrack?'✓ on track':'push needed'}</span>`}
+      </div>
+    </div>`;
+  }).join('');
+
+  // Rings
+  const mv = gd(`health.rings.${TODAY_S}.move`, 0);
+  const ex = gd(`health.rings.${TODAY_S}.exercise`, 0);
+  const st = gd(`health.rings.${TODAY_S}.stand`, 0);
+  const C = 2 * Math.PI;
+  const rings = document.getElementById('health-rings');
+  if (rings) rings.innerHTML = `
+    <div style="display:flex;align-items:center;gap:20px">
+      <svg width="100" height="100" viewBox="0 0 100 100">
+        ${[{r:42,v:mv,g:400,c:'#ff375f'},{r:32,v:ex,g:30,c:'#92e836'},{r:22,v:st,g:12,c:'#1fd1f9'}].map(ring => {
+          const circ = 2*Math.PI*ring.r;
+          const off = circ * (1 - Math.min(1, ring.v/ring.g));
+          return `<circle cx="50" cy="50" r="${ring.r}" fill="none" stroke="${ring.c}" stroke-width="7" opacity="0.15"/>
+          ${ring.v>0?`<circle cx="50" cy="50" r="${ring.r}" fill="none" stroke="${ring.c}" stroke-width="7" stroke-linecap="round" stroke-dasharray="${circ}" stroke-dashoffset="${off}" transform="rotate(-90 50 50)"/>`:''}`;
+        }).join('')}
+      </svg>
+      <div>
+        ${[{l:'Move',v:mv,g:400,c:'#ff375f',u:'cal'},{l:'Exercise',v:ex,g:30,c:'#92e836',u:'min'},{l:'Stand',v:st,g:12,c:'#1fd1f9',u:'hrs'}].map(r =>
+          `<div style="margin-bottom:7px"><div style="display:flex;justify-content:space-between;margin-bottom:3px"><span style="font-size:11px;color:${r.c}">${r.l}</span><span style="font-family:var(--font-mono);font-size:11px;color:${r.c}">${r.v}/${r.g}${r.u}</span></div><div style="height:4px;background:var(--ink4);border-radius:2px"><div style="height:100%;width:${Math.min(100,Math.round(r.v/r.g*100))}%;background:${r.c};border-radius:2px"></div></div></div>`
+        ).join('')}
+      </div>
+    </div>`;
+  const moveEl = document.getElementById('ring-move');
+  if (moveEl) moveEl.value = mv || '';
+  const exEl = document.getElementById('ring-exercise');
+  if (exEl) exEl.value = ex || '';
+  const stEl = document.getElementById('ring-stand');
+  if (stEl) stEl.value = st || '';
+  const stepsEl = document.getElementById('ring-steps');
+  if (stepsEl) stepsEl.value = gd(`health.rings.${TODAY_S}.steps`, '') || '';
+
+  // Sleep log
+  const slpLogs = gd('health.sleep', []).slice(0,7);
+  const slpEl = document.getElementById('health-sleep-log');
+  if (slpEl) slpEl.innerHTML = slpLogs.length ? slpLogs.map(l =>
+    `<div style="display:flex;align-items:center;gap:12px;padding:7px 0;border-bottom:1px solid var(--rule)">
+      <div style="font-family:var(--font-mono);font-size:10px;color:var(--text3)">${l.date}</div>
+      <div style="font-family:var(--font-mono);font-size:14px;font-weight:500;color:${l.hrs>=7?'var(--green)':l.hrs>=6?'var(--amber)':'var(--red)'}">${l.hrs}h</div>
+      <div style="font-size:11px;color:var(--text3)">${l.q}/10 quality</div>
+      <div style="font-size:11px;color:var(--text2);flex:1">${l.note||''}</div>
+    </div>`
+  ).join('') : '<div class="empty">No sleep logged. Log tonight\'s sleep.</div>';
+}
+
+// ═══════════════════════════════════════════
+// BUILD: SEO
+// ═══════════════════════════════════════════
+function buildSEO() {
+  const done = SEO_TASKS.filter((_,i) => gd(`seo.tasks.${TODAY_S}.t${i}`, false)).length;
+  document.getElementById('seo-tasks-done').textContent = done + '/5';
+  document.getElementById('seo-da').textContent = gd('seo.da', '—');
+  document.getElementById('seo-traffic').textContent = gd('seo.traffic', '—');
+
+  const wt = document.getElementById('seo-weekly-tasks');
+  if (wt) wt.innerHTML = SEO_TASKS.map((t,i) => {
+    const tdone = gd(`seo.tasks.${TODAY_S}.t${i}`, false);
+    return `<div onclick="toggleSEOTask(${i})" style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--rule);cursor:pointer">
+      <div class="chk${tdone?' on':''}">${tdone?'✓':''}</div>
+      <span style="font-size:12px;color:${tdone?'var(--text3)':'var(--text)'}${tdone?';text-decoration:line-through':''}">${t}</span>
+    </div>`;
+  }).join('');
+
+  const kws = gd('seo.keywords', []);
+  const kwEl = document.getElementById('seo-keywords');
+  if (kwEl) kwEl.innerHTML = kws.length ? kws.map((kw,i) =>
+    `<div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--rule)">
+      <span style="font-size:12px;color:var(--text);flex:1">${kw.word}</span>
+      <span style="font-family:var(--font-mono);font-size:10px;color:var(--text3)">pos: ${kw.pos||'?'}</span>
+      <button onclick="removeKeyword(${i})" style="background:transparent;border:none;color:var(--text3);cursor:pointer;font-size:12px">✕</button>
+    </div>`
+  ).join('') : '<div class="empty">No keywords tracked yet.</div>';
+
+  const logs = gd('seo.log', []);
+  const logEl = document.getElementById('seo-log');
+  if (logEl) logEl.innerHTML = logs.length ? logs.slice(0,8).map(l =>
+    `<div style="padding:7px 0;border-bottom:1px solid var(--rule);font-size:12px;color:var(--text2);line-height:1.5"><span style="font-family:var(--font-mono);font-size:9px;color:var(--text3);margin-right:8px">${l.date}</span>${l.text}</div>`
+  ).join('') : '<div class="empty">No research logged yet.</div>';
+}
+
+// ═══════════════════════════════════════════
+// BUILD: FAMILY
+// ═══════════════════════════════════════════
+function buildFamily() {
+  const fam = document.getElementById('family-rituals');
+  if (fam) fam.innerHTML = FAMILY_RITUALS.map(r => {
+    const done = gd(`family.${TODAY_S}.${r.id}`, false);
+    return `<div class="ritual-row" onclick="toggleRitual('${r.id}')">
+      <span class="ritual-emoji">${r.emoji}</span>
+      <div class="chk${done?' on':''}">${done?'✓':''}</div>
+      <span class="ritual-name" style="${done?'text-decoration:line-through;color:var(--text3)':''}">${r.label}</span>
+    </div>`;
+  }).join('');
+
+  const milestones = gd('company.milestones', []);
+  const msEl = document.getElementById('company-milestones');
+  if (msEl) msEl.innerHTML = milestones.length ? milestones.map((m,i) =>
+    `<div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--rule)">
+      <div class="chk${m.done?' on':''}" onclick="toggleMilestone(${i})">${m.done?'✓':''}</div>
+      <span style="flex:1;font-size:12px;color:${m.done?'var(--text3)':'var(--text)'}${m.done?';text-decoration:line-through':''}">${m.text}</span>
+      <button onclick="removeMilestone(${i})" style="background:transparent;border:none;color:var(--text3);cursor:pointer;font-size:12px">✕</button>
+    </div>`
+  ).join('') : '<div class="empty">No milestones yet. Add your first CyberNeurix milestone.</div>';
+
+  const homageEl = document.getElementById('homage-log');
+  if (homageEl) homageEl.value = gd(`homage.${TODAY_S}`, '');
+
+  const hist = gd('homage.history', []).slice(0,5);
+  const histEl = document.getElementById('homage-history');
+  if (histEl) histEl.innerHTML = hist.length ? hist.map(h =>
+    `<div style="padding:8px 10px;margin-bottom:6px;background:rgba(201,150,90,0.04);border-left:2px solid rgba(201,150,90,0.2);border-radius:0 6px 6px 0">
+      <div style="font-family:var(--font-mono);font-size:9px;color:var(--text3);margin-bottom:3px">${h.date}</div>
+      <div style="font-size:12px;color:var(--text2);font-style:italic;line-height:1.6">${h.text}</div>
+    </div>`
+  ).join('') : '';
+}
+
+// ═══════════════════════════════════════════
+// BUILD: TRACKERS
+// ═══════════════════════════════════════════
+function buildTrackers() {
+  const grid = document.getElementById('tracker-grid');
+  if (!grid) return;
+  grid.innerHTML = TRACKER_LINKS.map(t => `
+    <a class="tracker-card" href="${t.url}" target="_blank" rel="noopener noreferrer" style="border-left-color:${t.color}">
+      <div class="tracker-card-icon">${t.icon}</div>
+      <div class="tracker-card-name">${t.name}</div>
+      <div class="tracker-card-desc">${t.desc}</div>
+      <div class="tracker-card-link">Open tracker ↗</div>
+    </a>
+  `).join('');
+}
+
+// ═══════════════════════════════════════════
+// BUILD: WEEKLY
+// ═══════════════════════════════════════════
+function buildWeekly() {
+  const monday = getMon(TODAY);
+  const wkLabel = `${monday.toLocaleDateString('en-IN',{day:'numeric',month:'short'})} – ${addDays(monday,6).toLocaleDateString('en-IN',{day:'numeric',month:'short'})}`;
+  document.getElementById('wk-label').textContent = wkLabel;
+
+  const wkKey = getWkKey();
+  const rev = gd('weekly.' + wkKey, {});
+  ['priority','carry','helped','blocked'].forEach(k => {
+    const el = document.getElementById('wk-' + k);
+    if (el) el.value = rev[k] || '';
+  });
+
+  // Week view grid
+  const days = Array.from({length:7}, (_,i) => addDays(monday,i));
+  const dayNames = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const wvg = document.getElementById('week-view-grid');
+  if (wvg) {
+    let html = `<div class="week-grid">
+      <div class="wg-row-label"></div>
+      ${days.map((d,i) => `<div class="wg-header${dateStr(d)===TODAY_S?' wv-today':''}">${dayNames[i]}<br><span style="color:var(--text2)">${d.getDate()}</span></div>`).join('')}`;
+    WEEK_STREAMS.forEach(s => {
+      html += `<div class="wg-row-label">${s.label}</div>`;
+      days.forEach((d,i) => {
+        const ds = dateStr(d), key = `${s.id}_${ds}`;
+        const done = gd('weekview.' + key, false);
+        const isT = ds === TODAY_S;
+        html += `<div class="wg-cell${done?' done':''}${isT?' today':''}" onclick="toggleWVCell('${s.id}','${ds}')">
+          ${done?'<div class="wg-cell-check">✓</div>':''}
+        </div>`;
+      });
+    });
+    html += '</div>';
+    wvg.innerHTML = html;
+  }
+
+  // Forecast
+  const fc = document.getElementById('weekly-forecast');
+  if (fc) {
+    const totalTarget = Object.values(FORECAST_TARGETS).reduce((a,v) => a+v, 0);
+    fc.innerHTML = Object.entries(FORECAST_TARGETS).map(([key, target]) => {
+      const actual = gd(`forecast.${wkKey}.${key}`, 0);
+      const pct = Math.min(100, Math.round(actual/target*100));
+      const colors = {academy:'var(--blue)',rixtrace:'var(--red)',sa_upskill:'var(--teal)',blogging:'var(--purple)',health:'var(--green)',family:'var(--amber)'};
+      const labels = {academy:'Academy L&D',rixtrace:'RixTrace',sa_upskill:'SA Upskill',blogging:'Blogging',health:'Health/Exercise',family:'Family'};
+      return `<div style="margin-bottom:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+          <span style="font-size:11px;color:var(--text)">${labels[key]}</span>
+          <div style="display:flex;align-items:center;gap:8px">
+            <input type="number" value="${actual}" style="width:55px;background:var(--ink3);border:1px solid var(--rule);border-radius:5px;color:${colors[key]};padding:3px 6px;font-size:11px;outline:none;text-align:center;font-family:var(--font-mono)" onchange="setForecast('${key}',this.value)">
+            <span style="font-family:var(--font-mono);font-size:10px;color:var(--text3)">/ ${target}h</span>
+          </div>
+        </div>
+        <div class="pbar"><div class="pbar-fill" style="background:${colors[key]};width:${pct}%"></div></div>
+      </div>`;
+    }).join('');
+  }
+}
+
+// ═══════════════════════════════════════════
+// INTERACTIONS
+// ═══════════════════════════════════════════
+function toggleTask(id) { ensureDay(); sd('daily.tasks.' + id, !gd('daily.tasks.' + id, false)); renderAll(); }
+function toggleMed(id) { ensureDay(); sd('daily.meds.' + id, !gd('daily.meds.' + id, false)); buildWellbeing(); }
+function adjSub(type, d) { ensureDay(); sd('daily.' + type, Math.max(0, gd('daily.' + type, 0) + d)); buildWellbeing(); }
+function toggleLD(i) { sd(`ld.top10.${i}`, !gd(`ld.top10.${i}`, false)); buildAcademy(); }
+function toggleArch(compId, key) { sd(`academy.c${compId}.${key}`, !gd(`academy.c${compId}.${key}`, false)); buildAcademy(); renderAll(); }
+function toggleAcaExpand(compId) { sd(`academy.expand.${compId}`, !gd(`academy.expand.${compId}`, false)); buildAcademy(); }
+function toggleLabActivity(compId, i) {
+  sd(`academy.c${compId}.labact.${i}`, !gd(`academy.c${compId}.labact.${i}`, false));
+  const allLabsDone = [0,1,2,3].every(j => gd(`academy.c${compId}.labact.${j}`, false));
+  sd(`academy.c${compId}.lab`, allLabsDone);
+  buildAcademy(); renderAll();
+}
+function toggleScoringLayer(i) { sd(`cnis.scoring.layer.${i}`, !gd(`cnis.scoring.layer.${i}`, false)); buildCNIS(); }
+function toggleSEOTask(i) { sd(`seo.tasks.${TODAY_S}.t${i}`, !gd(`seo.tasks.${TODAY_S}.t${i}`, false)); buildSEO(); }
+function toggleRitual(id) { sd(`family.${TODAY_S}.${id}`, !gd(`family.${TODAY_S}.${id}`, false)); buildFamily(); renderAll(); }
+function toggleMilestone(i) { const ms = gd('company.milestones', []); ms[i].done = !ms[i].done; sd('company.milestones', ms); buildFamily(); }
+function toggleWVCell(sid, ds) { sd('weekview.' + sid + '_' + ds, !gd('weekview.' + sid + '_' + ds, false)); buildWeekly(); }
+function cycleSprint(id) {
+  const stages = ['Not Started','In Progress','Blocked','Done'];
+  const def = CNIS_SPRINTS.find(s => s.id === id)?.status || 'Not Started';
+  const cur = gd('cnis.sprint.' + id, def);
+  const next = stages[(stages.indexOf(cur) + 1) % stages.length];
+  sd('cnis.sprint.' + id, next);
+  buildCNIS(); renderAll();
+}
+function cycleBlogStatus(i) {
+  const posts = gd('blog.posts', []);
+  const stages = ['idea','outline','draft','review','published'];
+  posts[i].status = stages[(stages.indexOf(posts[i].status||'idea')+1)%stages.length];
+  if (posts[i].status === 'published') posts[i].date = TODAY_S;
+  sd('blog.posts', posts);
+  buildBlogging(); renderAll();
+}
+
+function saveMarker(id, val) { if (val) { sd(`health.t45.${id}`, parseFloat(val)); buildHealth(); } }
+function saveRings() {
+  ['move','exercise','stand','steps'].forEach(k => {
+    const v = document.getElementById('ring-' + k)?.value;
+    if (v) sd(`health.rings.${TODAY_S}.${k}`, parseFloat(v));
+  });
+  toast('⌚ Rings saved'); buildHealth();
+}
+function logSleep() {
+  const hrs = parseFloat(document.getElementById('slp-hrs')?.value);
+  const q = parseInt(document.getElementById('slp-quality')?.value) || 7;
+  const note = document.getElementById('slp-note')?.value || '';
+  if (!hrs) { toast('Enter hours'); return; }
+  const logs = gd('health.sleep', []);
+  logs.unshift({ date: TODAY_S, hrs, q, note });
+  sd('health.sleep', logs.slice(0, 90));
+  document.getElementById('slp-hrs').value = '';
+  document.getElementById('slp-quality').value = '';
+  document.getElementById('slp-note').value = '';
+  toast('😴 Sleep logged'); buildHealth();
+}
+function addBlogPost() {
+  const title = document.getElementById('blog-new-title')?.value.trim();
+  const status = document.getElementById('blog-new-status')?.value || 'idea';
+  if (!title) { toast('Enter a title'); return; }
+  const posts = gd('blog.posts', []);
+  posts.unshift({ title, status, date: status === 'published' ? TODAY_S : null, created: TODAY_S });
+  sd('blog.posts', posts);
+  document.getElementById('blog-new-title').value = '';
+  toast('Post added'); buildBlogging(); renderAll();
+}
+function addKeyword() {
+  const w = document.getElementById('seo-kw-inp')?.value.trim();
+  if (!w) return;
+  const kws = gd('seo.keywords', []);
+  kws.push({ word: w, pos: null, added: TODAY_S });
+  sd('seo.keywords', kws);
+  document.getElementById('seo-kw-inp').value = '';
+  buildSEO();
+}
+function removeKeyword(i) { const kws = gd('seo.keywords', []); kws.splice(i, 1); sd('seo.keywords', kws); buildSEO(); }
+function logSEO() {
+  const v = document.getElementById('seo-log-inp')?.value.trim();
+  if (!v) return;
+  const logs = gd('seo.log', []);
+  logs.unshift({ date: TODAY_S, text: v });
+  sd('seo.log', logs.slice(0, 50));
+  document.getElementById('seo-log-inp').value = '';
+  buildSEO();
+}
+function logAcademy() {
+  const v = document.getElementById('aca-log-inp')?.value.trim();
+  if (!v) return;
+  const logs = gd('academy.log', []);
+  logs.unshift({ date: TODAY_S, text: v });
+  sd('academy.log', logs.slice(0, 50));
+  document.getElementById('aca-log-inp').value = '';
+  buildAcademy();
+}
+function logCNIS() {
+  const v = document.getElementById('cnis-log-inp')?.value.trim();
+  if (!v) return;
+  const logs = gd('cnis.buildlog', []);
+  logs.unshift({ date: TODAY_S, text: v });
+  sd('cnis.buildlog', logs.slice(0, 50));
+  document.getElementById('cnis-log-inp').value = '';
+  buildCNIS();
+}
+function addMilestone() {
+  const v = document.getElementById('ms-inp')?.value.trim();
+  if (!v) return;
+  const ms = gd('company.milestones', []);
+  ms.push({ text: v, done: false, added: TODAY_S });
+  sd('company.milestones', ms);
+  document.getElementById('ms-inp').value = '';
+  buildFamily();
+}
+function removeMilestone(i) {
+  const ms = gd('company.milestones', []);
+  ms.splice(i, 1);
+  sd('company.milestones', ms);
+  buildFamily();
+}
+function setForecast(key, val) { sd(`forecast.${getWkKey()}.${key}`, parseFloat(val) || 0); }
+
+// SAVES
+function saveDaily() {
+  ensureDay();
+  sd(`streak.${TODAY_S}`, calcDailyPct());
+  toast('Day saved ✓');
+  const el = document.getElementById('brief-save-status');
+  if (el) { el.textContent = 'Saved ✓'; el.style.color = 'var(--green)'; }
+  renderAll();
+}
+function saveEvening() {
+  sd(`eve.${TODAY_S}.moved`, document.getElementById('eve-moved')?.value || '');
+  sd(`eve.${TODAY_S}.blocked`, document.getElementById('eve-blocked')?.value || '');
+  sd(`eve.${TODAY_S}.firstmove`, document.getElementById('eve-firstmove')?.value || '');
+  toast('Evening closed ✓'); buildBrief();
+}
+function saveWellbeing() {
+  ['q1','q2','q3'].forEach(q => {
+    const el = document.getElementById('wb-j-' + q);
+    if (el) sd(`wb.journal.${TODAY_S}.${q}`, el.value);
+  });
+  sd(`streak.${TODAY_S}`, calcDailyPct());
+  const nico = gd('daily.nico', 0), mj = gd('daily.mj', 0);
+  const tr = getTaperTarget();
+  const logs = gd('sub.logs', []);
+  logs.unshift({ date: TODAY_S, r: nico, m: mj, rt: tr.r, mt: tr.m });
+  sd('sub.logs', logs.slice(0, 90));
+  toast('Wellbeing saved ✓');
+}
+function saveAcademy() { sd('academy.savedAt', Date.now()); toast('Academy saved ✓'); }
+function saveSA() {
+  const log = document.getElementById('sa-log-today')?.value;
+  const hrs = document.getElementById('sa-hrs-today')?.value;
+  const note = document.getElementById('sa-note-today')?.value;
+  if (log) sd(`sa.log.${TODAY_S}`, log);
+  if (hrs) sd(`sa.hours.${TODAY_S}`, parseFloat(hrs));
+  if (note) sd(`sa.note.${TODAY_S}`, note);
+  toast('SA log saved ✓'); buildSA();
+}
+function saveFamily() {
+  const homage = document.getElementById('homage-log')?.value?.trim();
+  if (homage) {
+    sd(`homage.${TODAY_S}`, homage);
+    const hist = gd('homage.history', []);
+    hist.unshift({ date: TODAY_S, text: homage });
+    sd('homage.history', hist.slice(0, 30));
+  }
+  toast('Family saved ✓'); buildFamily();
+}
+function saveHomage() { saveFamily(); }
+function saveWeekly() {
+  const wkKey = getWkKey();
+  ['priority','carry','helped','blocked'].forEach(k => {
+    const el = document.getElementById('wk-' + k);
+    if (el) sd(`weekly.${wkKey}.${k}`, el.value);
+  });
+  toast('Weekly review saved ✓');
+}
+function saveWeekView() { sd('weekview.savedAt', Date.now()); toast('Week view saved ✓'); }
+
+// ═══════════════════════════════════════════
+// UTILS
+// ═══════════════════════════════════════════
+function getMon(d) { const m = new Date(d); const wd = m.getDay() === 0 ? 6 : m.getDay()-1; m.setDate(m.getDate()-wd); return m; }
+function addDays(d, n) { const r = new Date(d); r.setDate(r.getDate()+n); return r; }
+function dateStr(d) { return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+function getWkKey() { const m = getMon(TODAY); return dateStr(m); }
+function getTaperTarget() {
+  const day = Math.round((TODAY - new Date('2026-06-05')) / 86400000);
+  if (day < 7) return {r:6,m:4};
+  if (day < 14) return {r:5,m:3};
+  if (day < 21) return {r:4,m:2};
+  if (day < 28) return {r:3,m:1};
+  if (day < 35) return {r:2,m:0};
+  return {r:0,m:0};
+}
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 2500);
+}
+
+// ═══════════════════════════════════════════
+// INIT
+// ═══════════════════════════════════════════
+S = lsGet();
+ensureDay();
+renderAll();
+cloudLoad();
+setInterval(cloudLoad, 8000);
+</script>
+</body>
+</html>
