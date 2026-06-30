@@ -5005,7 +5005,7 @@ function tndStopActiveChant(){
 // than throwing, so a missing upload doesn't break the whole page.
 const tndAudioSampleCache = {};
 function tndMakeAudioSamplePlayer(filename, displayName){
-  return function(){
+  return function(onError){
     let audioEl = tndAudioSampleCache[filename];
     if(!audioEl){
       audioEl = new Audio(`sounds/${filename}`);
@@ -5015,16 +5015,22 @@ function tndMakeAudioSamplePlayer(filename, displayName){
     }
     audioEl.volume = tndChantGainNode ? tndChantGainNode.gain.value : 0.45;
     audioEl.currentTime = 0;
+    let failed = false, startedPlaying = false;
+    const handleFailure = (err) => {
+      if(failed || startedPlaying) return;
+      failed = true;
+      console.error(`Could not play ${displayName} — check that sounds/${filename} was actually uploaded next to index.html on GitHub Pages (a missing file is the most common cause).`, err || '');
+      if(onError) onError(err);
+    };
+    audioEl.onerror = () => handleFailure(audioEl.error);
+    audioEl.onplaying = () => { startedPlaying = true; };
     const playPromise = audioEl.play();
-    if(playPromise && playPromise.catch){
-      playPromise.catch(err => {
-        console.error(`Could not play ${displayName} — make sure sounds/${filename} has been uploaded.`, err);
-      });
-    }
+    if(playPromise && playPromise.catch) playPromise.catch(handleFailure);
+    setTimeout(() => { if(!startedPlaying) handleFailure(new Error('Playback never started')); }, 1500);
     return {
       stop: function(){
-        // Fade out over 300ms rather than an abrupt cut, matching the feel
-        // of the previous synthesis voices' fade-stop behavior.
+        audioEl.onerror = null;
+        audioEl.onplaying = null;
         const startVol = audioEl.volume;
         const fadeStart = performance.now();
         const fadeDuration = 300;
@@ -5036,8 +5042,6 @@ function tndMakeAudioSamplePlayer(filename, displayName){
         }
         fadeStep();
       },
-      // Allows the volume slider to affect a currently-playing sample, since
-      // unlike the Web Audio graph this isn't routed through tndChantGainNode.
       setVolume: function(v){ audioEl.volume = v; }
     };
   };
@@ -5058,17 +5062,24 @@ function tndInitChants(){
       if(tndActiveChantId===id){ tndStopActiveChant(); return; }
       tndStopActiveChant();
       tndActiveChantId=id;
-      tndActiveChant=tndChantMakers[id]();
+      tndSetChantError('');
+      const fileMap={om:'om-chant.mp3',mani:'om-mani-chant.mp3',tanpura:'tanpura.mp3'};
+      tndActiveChant=tndChantMakers[id](err=>{
+        if(tndActiveChantId===id) tndStopActiveChant();
+        if(fileMap[id]) tndSetChantError(`Couldn't play — sounds/${fileMap[id]} is missing or failed to load. Check it was uploaded to GitHub Pages.`);
+      });
       btn.classList.add('playing');
     });
   });
   document.getElementById('tndChantVolume').addEventListener('input',e=>{
     const v = parseFloat(e.target.value);
     if(tndChantGainNode) tndChantGainNode.gain.value = v;
-    // Sample-based players aren't routed through tndChantGainNode, so the
-    // slider needs to reach them directly too.
     if(tndActiveChant && tndActiveChant.setVolume) tndActiveChant.setVolume(v);
   });
+}
+function tndSetChantError(msg){
+  const el=document.getElementById('tndChantError');
+  if(el) el.textContent=msg;
 }
 
 function tndPlayCymbal(volumeMult=1){
