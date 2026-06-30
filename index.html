@@ -1194,6 +1194,15 @@ input[type=range].tnd-vol-slider::-webkit-slider-thumb{-webkit-appearance:none;w
           <button class="tnd-med-chant-btn" id="tndChantTanpura" data-chant="tanpura">
             <span class="tnd-med-chant-icon">🎶</span> Tanpura
           </button>
+          <button class="tnd-med-chant-btn" id="tndChantThanpura" data-chant="thanpura">
+            <span class="tnd-med-chant-icon">🎶</span> Thanpura 2
+          </button>
+          <button class="tnd-med-chant-btn" id="tndChantOceanWaves" data-chant="oceanwaves">
+            <span class="tnd-med-chant-icon">🌊</span> Ocean Waves
+          </button>
+          <button class="tnd-med-chant-btn" id="tndChantOceanz" data-chant="oceanz">
+            <span class="tnd-med-chant-icon">🌊</span> Oceanz
+          </button>
         </div>
         <div id="tndChantError" style="font-size:11px;color:var(--tnd-ember);margin:-4px 0 8px;min-height:14px;"></div>
         <div class="tnd-sound-volume-row" style="margin-top:8px;">
@@ -5050,7 +5059,10 @@ function tndMakeAudioSamplePlayer(filename, displayName){
 const tndMakeOmChant = tndMakeAudioSamplePlayer('om-chant.mp3', 'Om chant');
 const tndMakeOmManiChant = tndMakeAudioSamplePlayer('om-mani-chant.mp3', 'Om Mani Padme Hum chant');
 const tndMakeTanpura = tndMakeAudioSamplePlayer('tanpura.mp3', 'Tanpura');
-// Drone (singing bowl) keeps its existing synthesis — it wasn't reported as
+const tndMakeThanpura = tndMakeAudioSamplePlayer('thanpura.mp3', 'Thanpura');
+const tndMakeOceanWaves = tndMakeAudioSamplePlayer('ocean-waves.mp3', 'Ocean Waves');
+const tndMakeOceanz = tndMakeAudioSamplePlayer('oceanz.mp3', 'Oceanz');
+const tndChantMakers={om:tndMakeOmChant,mani:tndMakeOmManiChant,drone:tndMakeDroneChant,tanpura:tndMakeTanpura,thanpura:tndMakeThanpura,oceanwaves:tndMakeOceanWaves,oceanz:tndMakeOceanz};// Drone (singing bowl) keeps its existing synthesis — it wasn't reported as
 // sounding wrong, and inharmonic bowl partials are a much easier thing to
 // synthesize convincingly than a human voice or a richly resonant string
 // instrument, so there's no real need to replace it with a sample.
@@ -5064,7 +5076,7 @@ function tndInitChants(){
       tndStopActiveChant();
       tndActiveChantId=id;
       tndSetChantError('');
-      const fileMap={om:'om-chant.mp3',mani:'om-mani-chant.mp3',tanpura:'tanpura.mp3'};
+      const fileMap={om:'om-chant.mp3',mani:'om-mani-chant.mp3',tanpura:'tanpura.mp3',thanpura:'thanpura.mp3',oceanwaves:'ocean-waves.mp3',oceanz:'oceanz.mp3'};
       tndActiveChant=tndChantMakers[id](err=>{
         if(tndActiveChantId===id) tndStopActiveChant();
         if(fileMap[id]) tndSetChantError(`Couldn't play — sounds/${fileMap[id]} is missing or failed to load. Check it was uploaded to GitHub Pages.`);
