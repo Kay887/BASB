@@ -1675,6 +1675,7 @@ async function authVerifyCode() {
   document.getElementById('auth-screen').classList.remove('show');
   cloudLoad();
   setInterval(cloudLoad, 8000);
+  syncSchedulerBlocksToSupabase();
 }
 async function checkAuthSession() {
   if (!sbClient) return false;
@@ -1975,7 +1976,7 @@ const SCHED_WORKSTREAMS = {
   commute:     { label: 'Commute', color: 'var(--text3)' },
 };
 const SCHED_MORNING = [
-  { id:'m1', time:'08:00 AM', title:'Wake Up + Detox Drink', desc:'Warm water + lemon / ACV immediately' },
+  { id:'m1', time:'08:00', title:'Wake Up + Detox Drink', desc:'Warm water + lemon / ACV immediately' },
   { id:'m2', time:'08:15–08:30', title:'Protein Smoothie', desc:'Milk + plant protein + moringa + chia + PB' },
   { id:'m3', time:'08:30–09:00', title:'Bath + Prayer + Get Ready', desc:'Prepare coffee to carry, lunch to go' },
   { id:'m4', time:'09:00–09:30', title:'Commute to Office', desc:'Coffee in hand', ws:'commute' },
@@ -1983,21 +1984,21 @@ const SCHED_MORNING = [
 const SCHED_PROFESSIONAL = [
   { id:'p1', time:'10:30–12:00', title:'Deep Work Block 1', desc:'ESecurityIn — content/curriculum, L&D priorities', ws:'esecurityin' },
   { id:'p2', time:'12:00–12:15', title:'Break + Walk', desc:'Short circuit breaker', ws:'health' },
-  { id:'p3', time:'12:30–02:00', title:'Deep Work Block 2', desc:'NEURIX scoring closure for RixTrace', ws:'neurix' },
-  { id:'p4', time:'02:00–03:00', title:'Lunch', desc:'Eat away from screen', ws:'health' },
-  { id:'p5', time:'03:00–04:15', title:'Deep Work Block 3', desc:'CNIS — RixTrace close-out, RixControl ideation', ws:'cnis' },
-  { id:'p6', time:'04:15–04:30', title:'Break', desc:'Walk / coffee', ws:'health' },
-  { id:'p7', time:'04:15–06:00', title:'Deep Work Block 4', desc:'Marketing/SEO — site, CNIS product promotion, blogging', ws:'marketing' },
-  { id:'p8', time:'06:00–06:30', title:'Wrap Up + Emails', desc:'Admin, follow-ups, end of day notes', ws:'esecurityin' },
+  { id:'p3', time:'12:30–14:00', title:'Deep Work Block 2', desc:'NEURIX scoring closure for RixTrace', ws:'neurix' },
+  { id:'p4', time:'14:00–15:00', title:'Lunch', desc:'Eat away from screen', ws:'health' },
+  { id:'p5', time:'15:00–16:15', title:'Deep Work Block 3', desc:'CNIS — RixTrace close-out, RixControl ideation', ws:'cnis' },
+  { id:'p6', time:'16:15–16:30', title:'Break', desc:'Walk / coffee', ws:'health' },
+  { id:'p7', time:'16:15–18:00', title:'Deep Work Block 4', desc:'Marketing/SEO — site, CNIS product promotion, blogging', ws:'marketing' },
+  { id:'p8', time:'18:00–18:30', title:'Wrap Up + Emails', desc:'Admin, follow-ups, end of day notes', ws:'esecurityin' },
 ];
 const SCHED_EVENING = [
-  { id:'e1', time:'06:30–07:30', title:'Commute Home', desc:'Decompress, no screens if possible' },
-  { id:'e2', time:'07:45–08:30', title:'Exercise', desc:'45 mins — cycling / strength / walk' },
-  { id:'e3', time:'09:00–09:30', title:'Bath + Meditate / Prayer', desc:'Cool down, 5–10 mins grounding' },
-  { id:'e4', time:'09:30–10:00', title:'Dinner + Wife Time', desc:'Kitchen together, eat, light conversation' },
-  { id:'e5', time:'10:00–11:00', title:'Product / White Paper Work', desc:'RixTrace or whitepaper — artifact output required', ws:'cnis' },
-  { id:'e6', time:'11:00–11:30', title:'Journaling + Reading', desc:'Wind down, no screens after this' },
-  { id:'e7', time:'11:45 PM', title:'Lights Out', desc:'Sleep by midnight — non-negotiable' },
+  { id:'e1', time:'18:30–19:30', title:'Commute Home', desc:'Decompress, no screens if possible' },
+  { id:'e2', time:'19:45–20:30', title:'Exercise', desc:'45 mins — cycling / strength / walk' },
+  { id:'e3', time:'21:00–21:30', title:'Bath + Meditate / Prayer', desc:'Cool down, 5–10 mins grounding' },
+  { id:'e4', time:'21:30–22:00', title:'Dinner + Wife Time', desc:'Kitchen together, eat, light conversation' },
+  { id:'e5', time:'22:00–23:00', title:'Product / White Paper Work', desc:'RixTrace or whitepaper — artifact output required', ws:'cnis' },
+  { id:'e6', time:'23:00–23:30', title:'Journaling + Reading', desc:'Wind down, no screens after this' },
+  { id:'e7', time:'23:45', title:'Lights Out', desc:'Sleep by midnight — non-negotiable' },
 ];
 
 const TRACKER_LINKS = [
@@ -2008,6 +2009,36 @@ const TRACKER_LINKS = [
   {name:'Food Tracker',      url:'https://kay887.github.io/Food-tracker/',            desc:'Nutrition logging',        icon:'🍽'},
   {name:'Master Tracker',    url:'https://kay887.github.io/Master-tracker/',          desc:'CNX Master Command',       icon:'🗂'},
 ];
+
+  // ═══════════════════════════════════════════
+// SCHEDULER → SUPABASE SYNC — keeps scheduler_blocks as a live mirror of
+// SCHED_MORNING/PROFESSIONAL/EVENING. Times are now stored in real 24-hour
+// format above, so parsing is a plain, unambiguous HH:MM read — no more
+// section-based AM/PM guessing needed.
+// ═══════════════════════════════════════════
+function parseSchedBlockTime(timeStr) {
+  const startPart = timeStr.split(/[-–]/)[0].trim();
+  const timeMatch = startPart.match(/(\d{1,2}):(\d{2})/);
+  if (!timeMatch) return null;
+  return { hour: parseInt(timeMatch[1], 10), minute: parseInt(timeMatch[2], 10) };
+}
+
+let _schedulerSynced = false;
+async function syncSchedulerBlocksToSupabase() {
+  if (!sbClient || !authUserId || _schedulerSynced) return;
+  _schedulerSynced = true;
+
+  const allBlocks = [...SCHED_MORNING, ...SCHED_PROFESSIONAL, ...SCHED_EVENING];
+  const rows = [];
+  for (const b of allBlocks) {
+    const parsed = parseSchedBlockTime(b.time);
+    if (!parsed) { console.error('Could not parse time for block', b.id, b.time); continue; }
+    rows.push({ id: b.id, title: b.title, time_str: b.time, hour: parsed.hour, minute: parsed.minute });
+  }
+  const { error } = await sbClient.from('scheduler_blocks').upsert(rows, { onConflict: 'id' });
+  if (error) console.error('scheduler_blocks sync failed:', error.message);
+  else console.log(`scheduler_blocks synced: ${rows.length} blocks`);
+}
 
 // ═══════════════════════════════════════════
 // BUILD DISPATCHER
@@ -4290,36 +4321,7 @@ function getTodayLDTask() {
 // not because the digits themselves say so. Without knowing which section
 // a block belongs to, no purely string-based parse can be correct for
 // every block in this dataset — tested and confirmed during development.
-function parseSchedBlockStartTime(timeStr, section) {
-  const rangeMatch = timeStr.match(/^(\d{1,2}):(\d{2})[–-]/);
-  if (rangeMatch) {
-    let hour = parseInt(rangeMatch[1]);
-    const minute = parseInt(rangeMatch[2]);
-    if (section === 'evening') {
-      // Evening blocks are always PM/late-night. Hour 12 stays as noon-style
-      // 12 (doesn't apply here), hours 1-11 all roll to PM.
-      if (hour >= 1 && hour <= 11) hour += 12;
-    } else if (section === 'professional') {
-      // Professional blocks run 9:30 AM through 6:00 PM. Hours 1-7 are
-      // unambiguously PM (lunch, afternoon); hours 8-11 are unambiguously AM
-      // (no professional block starts at 8-11 PM).
-      if (hour >= 1 && hour <= 7) hour += 12;
-    }
-    // 'morning' section: hours stay exactly as written, no conversion needed —
-    // every morning block genuinely is AM with these literal digits.
-    return { hour, minute };
-  }
-  const singleMatch = timeStr.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-  if (singleMatch) {
-    let hour = parseInt(singleMatch[1]);
-    const minute = parseInt(singleMatch[2]);
-    const isPM = singleMatch[3].toUpperCase() === 'PM';
-    if (isPM && hour !== 12) hour += 12;
-    if (!isPM && hour === 12) hour = 0;
-    return { hour, minute };
-  }
-  return null; // genuinely unparseable — caller should skip, not guess
-}
+
 function buildScheduler() {
   const today = todayKey();
   const allBlocks = [...SCHED_MORNING, ...SCHED_PROFESSIONAL, ...SCHED_EVENING];
@@ -6160,6 +6162,7 @@ setInterval(snapshotTodayStreak, 60000); // keep today's snapshot current as you
   } else {
     cloudLoad();
     setInterval(cloudLoad, 8000);
+    syncSchedulerBlocksToSupabase();
   }
 })();
 </script>
