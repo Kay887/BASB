@@ -1646,6 +1646,15 @@ async function cloudLoad() {
 async function cloudSave() {
   if (!sbClient || !authUserId) return; // can't save to a row that isn't tied to a real authenticated user
   try {
+    // Pull the current remote row first and merge — otherwise a second device's
+    // change that hasn't reached us yet via cloudLoad gets silently clobbered
+    // by this device's stale in-memory S. Same merge logic cloudLoad already uses.
+    const { data: rows, error: selErr } = await sbClient.from(TABLE).select('data').eq('id', authUserId);
+    if (!selErr && rows && rows.length && rows[0].data) {
+      const cloud = JSON.parse(rows[0].data);
+      S = mergeState(S, cloud);
+      lsSet();
+    }
     await sbClient.from(TABLE).upsert({ id: authUserId, data: JSON.stringify(S), updated_at: new Date().toISOString() });
     syncDot(true);
   } catch(e) {}
@@ -2458,7 +2467,7 @@ function destroyChart(id) { if (_charts[id]) { _charts[id].destroy(); delete _ch
 function buildDashboard() {
   if (typeof Chart === 'undefined') return;
   const days = Array.from({length:14}, (_,i) => { const d = new Date(); d.setDate(d.getDate()-13+i); return d; });
-  const dateStrs = days.map(d => d.toISOString().slice(0,10));
+  const dateStrs = days.map(d => localDateKey(d));
   const labels = days.map(d => d.getDate()+'/'+(d.getMonth()+1));
   const series = dateStrs.map(ds => gd(`streak.${ds}`, 0));
 
@@ -2509,7 +2518,7 @@ function buildDashboard() {
   const heat = document.getElementById('db-streak-heat');
   if (heat) heat.innerHTML = days.map((d, i) => {
     const pct = series[i];
-    const isToday = dateStrs[i] === new Date().toISOString().slice(0,10);
+    const isToday = dateStrs[i] === todayKey();
     const bg = pct >= 70 ? CHART_COLORS.green : pct >= 40 ? CHART_COLORS.amber : pct > 0 ? 'rgba(200,80,80,0.4)' : '#22262F';
     return `<div class="heat-cell" title="${dateStrs[i]}: ${pct}%" style="background:${bg};border:1px solid ${isToday?CHART_COLORS.gold:'transparent'}"></div>`;
   }).join('');
@@ -3685,7 +3694,7 @@ function calcJournalStreak() {
   // "today" doesn't zero out a real streak before you've had a chance to write
   if (!gd(`journal.${todayKey()}`, null)) d.setDate(d.getDate() - 1);
   while (true) {
-    const key = d.toISOString().slice(0,10);
+    const key = localDateKey(d);
     if (!gd(`journal.${key}`, null)) break;
     streak++;
     d.setDate(d.getDate() - 1);
@@ -3706,7 +3715,7 @@ function buildJournal() {
     ? `<span class="tag badge-green">${streak} day${streak===1?'':'s'} in a row</span>`
     : `<span style="font-size:11px;color:var(--text3)">Start today's streak.</span>`;
 
-  const yesterdayKey = new Date(Date.now() - 864e5).toISOString().slice(0,10);
+  const yesterdayKey = localDateKey(new Date(Date.now() - 864e5));
   const yEntry = gd(`journal.${yesterdayKey}`, null);
   const yText = yEntry ? (typeof yEntry === 'string' ? yEntry : yEntry.text) : null;
   document.getElementById('journal-yesterday').innerHTML = yText
@@ -3754,7 +3763,14 @@ function saveJournalEntry() {
 // ═══════════════════════════════════════════
 // HEALTH
 // ═══════════════════════════════════════════
-function todayKey() { return new Date().toISOString().slice(0,10); }
+// Local-date key, not UTC — toISOString() shifts anything before ~5:30am IST
+// to the previous day. Every "today" key in the app should use this, not
+// toISOString().slice(0,10).
+function localDateKey(d) {
+  d = d || new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function todayKey() { return localDateKey(new Date()); }
 
 function buildHealthGlance() {
   const overall = calcOverallPct();
@@ -4410,7 +4426,7 @@ function calcSchedulerStreak() {
   const todayLog = gd(`scheduler.logs.${todayKeyStr}`, {});
   if (Object.keys(todayLog).filter(k=>todayLog[k]).length === 0) d.setDate(d.getDate()-1);
   while (true) {
-    const ds = d.toISOString().slice(0,10);
+    const ds = localDateKey(d);
     const log = gd(`scheduler.logs.${ds}`, null);
     if (!log) break;
     const doneCt = Object.keys(log).filter(k=>log[k]).length;
@@ -4422,7 +4438,7 @@ function calcSchedulerStreak() {
 }
 function buildSchedWorkstreamChart() {
   if (typeof Chart === 'undefined') return;
-  const days = Array.from({length:14}, (_,i) => { const d = new Date(); d.setDate(d.getDate()-13+i); return d.toISOString().slice(0,10); });
+  const days = Array.from({length:14}, (_,i) => { const d = new Date(); d.setDate(d.getDate()-13+i); return localDateKey(d); });
   const wsKeys = Object.keys(SCHED_WORKSTREAMS);
   const profBlocks = SCHED_PROFESSIONAL.filter(b => b.ws);
   // For each workstream, count how many days in the last 14 had its
@@ -4451,7 +4467,7 @@ function buildSchedWorkstreamChart() {
   });
 }
 function buildSchedPattern(allBlocks) {
-  const days = Array.from({length:14}, (_,i) => { const d = new Date(); d.setDate(d.getDate()-13+i); return d.toISOString().slice(0,10); });
+  const days = Array.from({length:14}, (_,i) => { const d = new Date(); d.setDate(d.getDate()-13+i); return localDateKey(d); });
   document.getElementById('sched-pattern').innerHTML = allBlocks.map(b => {
     const doneDays = days.filter(ds => gd(`scheduler.logs.${ds}`, {})[b.id]).length;
     const pct = Math.round(doneDays / days.length * 100);
@@ -4651,17 +4667,32 @@ let _pinMode = 'unlock';
 let _pinConfBuf = '';
 
 async function sha256(str) {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  const salted = getOrCreateSalt() + ':' + str; // salted so a leaked hash alone isn't directly crackable
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(salted));
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 function pinGetStored() { return localStorage.getItem('cnx_pin'); }
 function pinSetStored(hash) { localStorage.setItem('cnx_pin', hash); }
 function rcGetStored() { return localStorage.getItem('cnx_rc'); }
 function rcSetStored(hash) { localStorage.setItem('cnx_rc', hash); }
+function getOrCreateSalt() {
+  let salt = localStorage.getItem('cnx_salt');
+  if (!salt) {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    salt = Array.from(bytes, b => b.toString(16).padStart(2,'0')).join('');
+    localStorage.setItem('cnx_salt', salt);
+  }
+  return salt;
+}
 
 function generateRecoveryCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  const seg = () => Array.from({length:4}, () => chars[Math.floor(Math.random()*chars.length)]).join('');
+  const seg = () => {
+    const bytes = new Uint8Array(4);
+    crypto.getRandomValues(bytes);
+    return Array.from(bytes, b => chars[b % chars.length]).join('');
+  };
   return seg()+'-'+seg()+'-'+seg();
 }
 function toggleRecoveryPanel() {
@@ -4675,6 +4706,7 @@ async function submitRecovery() {
   const hash = await sha256(val);
   if (hash === rcGetStored()) {
     localStorage.removeItem('cnx_pin');
+    localStorage.removeItem('cnx_rc'); // burn this code — a fresh one is generated once the new PIN is confirmed
     document.getElementById('recovery-panel').style.display = 'none';
     document.getElementById('recovery-inp').value = '';
     _pinBuffer = ''; _pinMode = 'set';
@@ -5196,13 +5228,21 @@ function tndInitMeditationCounter(){
     } else {
       tndMedRunning=true;
       document.getElementById('tndMedStartBtn').textContent='Pause';
+      // Anchor to wall-clock time rather than counting ticks — iOS suspends
+      // setInterval in a backgrounded/locked WebView, so a naive tick-counter
+      // silently drifts (or stalls) once you lock your phone mid-session.
+      // Recomputing from Date.now() each tick self-corrects regardless of
+      // how long the interval was actually throttled.
+      const sessionTotalSecs = tndMedSecondsLeft;
+      const startedAt = Date.now() - (tndMedDurationMins*60 - tndMedSecondsLeft)*1000;
+      let lastCymbalMark = tndCymbalSecondsSinceStrike;
       tndMedInterval=setInterval(()=>{
-        tndMedSecondsLeft--;
-        if(tndCymbalEnabled&&tndMedSecondsLeft>0){
-          tndCymbalSecondsSinceStrike++;
-          if(tndCymbalSecondsSinceStrike>0&&tndCymbalSecondsSinceStrike%300===0){
-            tndPlayCymbal(0.8);
-          }
+        const elapsed = Math.floor((Date.now() - startedAt)/1000);
+        tndMedSecondsLeft = Math.max(0, tndMedDurationMins*60 - elapsed);
+        if(tndCymbalEnabled && tndMedSecondsLeft>0){
+          tndCymbalSecondsSinceStrike = elapsed;
+          const marksPassed = Math.floor(elapsed/300);
+          if(marksPassed > lastCymbalMark){ lastCymbalMark = marksPassed; tndPlayCymbal(0.8); }
         }
         tndUpdateMedDisplay();
         if(tndMedSecondsLeft<=0){
