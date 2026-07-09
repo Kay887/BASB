@@ -1,0 +1,34 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2822
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 // sw.js \'97 handles incoming push events and notification clicks\
+self.addEventListener('push', event => \{\
+  let data = \{\};\
+  try \{ data = event.data ? event.data.json() : \{\}; \} catch(e) \{ data = \{ title: 'CNX Master OS', body: event.data ? event.data.text() : '' \}; \}\
+  const title = data.title || 'CNX Master OS';\
+  const options = \{\
+    body: data.body || '',\
+    icon: data.icon || '/icon-192.png',\
+    badge: data.badge || '/icon-192.png',\
+    tag: data.tag || 'cnx-reminder',\
+    data: \{ url: data.url || '/' \},\
+  \};\
+  event.waitUntil(self.registration.showNotification(title, options));\
+\});\
+\
+self.addEventListener('notificationclick', event => \{\
+  event.notification.close();\
+  const url = event.notification.data?.url || '/';\
+  event.waitUntil(\
+    clients.matchAll(\{ type: 'window', includeUncontrolled: true \}).then(windowClients => \{\
+      for (const client of windowClients) \{\
+        if (client.url.includes(self.registration.scope) && 'focus' in client) return client.focus();\
+      \}\
+      if (clients.openWindow) return clients.openWindow(url);\
+    \})\
+  );\
+\});}
