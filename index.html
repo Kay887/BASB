@@ -689,6 +689,14 @@ input[type=range].tnd-vol-slider::-webkit-slider-thumb{-webkit-appearance:none;w
           <div class="card-title">Today's Signal</div>
           <div id="ov-signal" style="display:flex;gap:14px;flex-wrap:wrap"></div>
         </div>
+        <div class="card" id="push-notif-card">
+          <div class="card-title">🔔 Push Reminders</div>
+          <div style="font-size:11px;color:var(--text2);line-height:1.6;margin-bottom:10px">
+            On iPhone/iPad: add this to your Home Screen first (Share → Add to Home Screen), then open it from there and tap below.
+          </div>
+          <button class="btn btn-gold" id="push-enable-btn" onclick="enablePushNotifications()">Enable Reminders</button>
+          <div id="push-status" style="font-size:10px;color:var(--text3);margin-top:8px"></div>
+        </div>
         <div class="card">
           <div class="card-title">Reminder Checklist <span id="ov-checklist-pct" style="color:var(--gold)"></span><span onclick="toggleReminderView()" style="cursor:pointer;color:var(--cyan);font-weight:400;font-size:9px;text-transform:none;letter-spacing:0" id="ov-checklist-view-toggle">⊞ Kanban view</span></div>
           <div id="ov-checklist"></div>
@@ -1802,6 +1810,7 @@ const LS_KEY = 'cnx_master_os_v2';
 const SUPA_URL = 'https://hzpdbhufpceikcbqgpiv.supabase.co';
 const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh6cGRiaHVmcGNlaWtjYnFncGl2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI0NTIxNzgsImV4cCI6MjA5ODAyODE3OH0.7H7Uh1WjDBFNbRukluvLsKnqrytCHm3LnNllobf4dw8';
 const TABLE = 'tracker_data';
+const VAPID_PUBLIC_KEY = 'BFKtU2N1Bq46BsAUn0kM4mMQ2TSJPEcAmw9qDqPtAhyjtkMeltq-zi8xk-aidY0pejA8Mv2823kC4UvgbsGb1TA';
 
 let S = {};
 function lsGet(fb = {}) { try { const v = localStorage.getItem(LS_KEY); return v ? JSON.parse(v) : fb; } catch(e) { return fb; } }
@@ -1942,6 +1951,67 @@ async function checkAuthSession() {
     return true;
   }
   return false;
+}
+
+// ═══════════════════════════════════════════
+// WEB PUSH — subscription capture, saved to push_subscriptions in Supabase
+// ═══════════════════════════════════════════
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+function pushSetStatus(msg) {
+  const el = document.getElementById('push-status');
+  if (el) el.textContent = msg;
+}
+async function enablePushNotifications() {
+  const btn = document.getElementById('push-enable-btn');
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    alert('Push notifications aren\'t supported in this browser. On iPhone/iPad, make sure you\'ve added this app to your Home Screen first (Share → Add to Home Screen), then open it from there.');
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.textContent = 'Enabling…'; }
+  try {
+    const reg = await navigator.serviceWorker.register('sw.js');
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+      if (btn) { btn.disabled = false; btn.textContent = 'Enable Reminders'; }
+      pushSetStatus('Permission denied — you can re-enable this later in your browser/iOS notification settings.');
+      return;
+    }
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+    });
+    const subJson = sub.toJSON();
+    if (!sbClient || !authUserId) {
+      pushSetStatus('Signed out — sign in first, then enable reminders.');
+      return;
+    }
+    const { error } = await sbClient.from('push_subscriptions').upsert({
+      user_id: authUserId,
+      endpoint: subJson.endpoint,
+      p256dh: subJson.keys.p256dh,
+      auth_key: subJson.keys.auth,
+    }, { onConflict: 'endpoint' });
+    if (error) { pushSetStatus('Saved locally, but sync failed: ' + error.message); return; }
+    pushSetStatus('✓ Reminders enabled on this device.');
+    if (btn) { btn.style.display = 'none'; }
+  } catch(e) {
+    pushSetStatus('Could not enable: ' + e.message);
+    if (btn) { btn.disabled = false; btn.textContent = 'Enable Reminders'; }
+  }
+}
+async function checkPushSubscriptionStatus() {
+  const btn = document.getElementById('push-enable-btn');
+  if (!btn || !('serviceWorker' in navigator)) return;
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    const existingSub = reg ? await reg.pushManager.getSubscription() : null;
+    if (existingSub && Notification.permission === 'granted') btn.style.display = 'none';
+  } catch(e) {}
 }
 
 S = lsGet();
@@ -2285,20 +2355,29 @@ function parseSchedBlockTime(timeStr) {
 let _schedulerSynced = false;
 async function syncSchedulerBlocksToSupabase() {
   if (!sbClient || !authUserId || _schedulerSynced) return;
-  _schedulerSynced = true;
 
-  const allBlocks = [...SCHED_MORNING, ...SCHED_PROFESSIONAL, ...SCHED_EVENING];
+  const sections = [
+    { blocks: SCHED_MORNING, section: 'morning' },
+    { blocks: SCHED_PROFESSIONAL, section: 'professional' },
+    { blocks: SCHED_EVENING, section: 'evening' },
+  ];
   const rows = [];
-  for (const b of allBlocks) {
-    const parsed = parseSchedBlockTime(b.time);
-    if (!parsed) { console.error('Could not parse time for block', b.id, b.time); continue; }
-    rows.push({ id: b.id, title: b.title, time_str: b.time, hour: parsed.hour, minute: parsed.minute });
+  for (const { blocks, section } of sections) {
+    blocks.forEach((b, i) => {
+      const parsed = parseSchedBlockTime(b.time);
+      if (!parsed) { console.error('Could not parse time for block', b.id, b.time); return; }
+      rows.push({
+        id: b.id, section, title: b.title, time_str: b.time,
+        hour: parsed.hour, minute: parsed.minute,
+        workstream: b.ws || null, sort_order: i + 1,
+      });
+    });
   }
   const { error } = await sbClient.from('scheduler_blocks').upsert(rows, { onConflict: 'id' });
-  if (error) console.error('scheduler_blocks sync failed:', error.message);
-  else console.log(`scheduler_blocks synced: ${rows.length} blocks`);
+  if (error) { console.error('scheduler_blocks sync failed:', error.message); return; }
+  _schedulerSynced = true; // only mark synced on actual success
+  console.log(`scheduler_blocks synced: ${rows.length} blocks`);
 }
-
 // ═══════════════════════════════════════════
 // BUILD DISPATCHER
 // ═══════════════════════════════════════════
@@ -7172,6 +7251,7 @@ switchView('overview');
 snapshotTodayStreak();
 setInterval(snapshotTodayStreak, 60000); // keep today's snapshot current as you make progress through the day
 pomoInit();
+checkPushSubscriptionStatus();
 (async () => {
   const hasSession = await checkAuthSession();
   if (!hasSession) {
@@ -7182,7 +7262,7 @@ pomoInit();
     syncSchedulerBlocksToSupabase();
     if (typeof pomoRenderStats === 'function') pomoRenderStats();
   }
-})();
+})().catch(err => console.error('Startup auth check failed:', err));
 </script>
 </body>
 </html>
