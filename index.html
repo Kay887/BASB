@@ -10558,5 +10558,675 @@ const CNX_VIEWS  = ['cyberneurix','cnx-website','cnx-cnis','cnx-blogging','cnx-c
 })();
 </script>
 
+<script>
+/* CNIS — replaced with the six real modules.
+   The app tracked "RixShield", which does not exist, and omitted RixControl,
+   RixIntel and RixNexis. Percentages, blockers and scope below are taken from
+   ~/CNIS - Platform/CNIS - build.md (compiled 2026-08-01 against the live
+   codebase), not estimated. Folder numbering and that document disagree on
+   M04-M06; the build doc wins, since it was measured. */
+const CNIS_MODULES = [
+  { id:'m01', n:'M01', name:'RixTrace',   code:'NEURIX v3', scores:'ESI / ERI — exposure & exploitability',
+    pct:75, state:'Engine done, inflation closed', c:'var(--red)', wedge:true,
+    blocker:'~15 collectors emit false-clean; no tenancy; 12/38 are 443-only' },
+  { id:'m02', n:'M02', name:'RixControl', code:'NORMA', scores:'CRI — control effectiveness',
+    pct:60, state:'Logic live, evidence cannot reach it', c:'var(--blue)', wedge:true,
+    blocker:'P0 fixed; P1–P3 open, all rixtrace-side' },
+  { id:'m03', n:'M03', name:'RixIntel',   code:'SYNTRA', scores:'Threat context',
+    pct:20, state:'Landing page only for 2026', c:'var(--purple)', wedge:true,
+    blocker:'Backend deliberately out of 2026 scope' },
+  { id:'m04', n:'M04', name:'RixNexis',   code:'INFERA', scores:'Cross-module verdict',
+    pct:10, state:'Design only', c:'var(--teal)', wedge:false,
+    blocker:'Gated on M01+M02 calibration + G7' },
+  { id:'m05', n:'M05', name:'RixOne',     code:'PRAXIS', scores:'Unified console',
+    pct:5,  state:'Design only', c:'var(--amber)', wedge:false, blocker:'Out of 2026 scope' },
+  { id:'m06', n:'M06', name:'RixLogix',   code:'VERITA', scores:'Chain-of-custody / evidence integrity',
+    pct:5,  state:'Design only', c:'var(--gold)', wedge:false, blocker:'Out of 2026 scope' },
+];
+const CNIS_WEDGE = 'Oct 6 wedge scope: M01 + M02 + M03 landing page. M04/M05/M06 and the M03 backend are explicitly out of 2026.';
+
+function buildCnisModules() {
+  const host = document.getElementById('view-cnx-cnis');
+  if (!host) return;
+  let el = document.getElementById('cnis-modules');
+  if (!el) { el = document.createElement('div'); el.id = 'cnis-modules'; host.insertBefore(el, host.firstChild); }
+  const wedge = CNIS_MODULES.filter(m => m.wedge);
+  const avg = Math.round(wedge.reduce((a, m) => a + m.pct, 0) / wedge.length);
+  el.innerHTML =
+    '<div class="dash-stat-row">' +
+      '<div class="dash-stat-card"><div class="dash-stat-lbl">Modules</div>' +
+        '<div class="dash-stat-val" style="color:var(--cyan-hi)">6</div></div>' +
+      '<div class="dash-stat-card"><div class="dash-stat-lbl">Oct 6 Wedge</div>' +
+        '<div class="dash-stat-val" style="color:var(--gold-hi)">' + avg + '%</div></div>' +
+      '<div class="dash-stat-card"><div class="dash-stat-lbl">In Scope 2026</div>' +
+        '<div class="dash-stat-val" style="color:var(--green)">3<span style="font-size:13px;color:var(--text3)">/6</span></div></div>' +
+      '<div class="dash-stat-card"><div class="dash-stat-lbl">Days to Oct 6</div>' +
+        '<div class="dash-stat-val" style="color:var(--amber)">' +
+          Math.max(0, Math.ceil((new Date('2026-10-06') - new Date()) / 864e5)) + '</div></div>' +
+    '</div>' +
+    '<div class="card"><div class="card-title">CNIS Suite — six modules, one kernel ' +
+      '<span style="color:var(--text3);font-weight:400;font-size:9px">measured 2026-08-01 against the live codebase</span></div>' +
+      CNIS_MODULES.map(m =>
+        '<div style="padding:11px 0;border-bottom:1px solid var(--rule)">' +
+          '<div style="display:flex;align-items:center;gap:9px;margin-bottom:5px;flex-wrap:wrap">' +
+            '<span style="font-family:var(--font-mono);font-size:10px;color:var(--text3)">' + m.n + '</span>' +
+            '<span style="font-size:13px;font-weight:600;color:' + m.c + '">' + m.name + '</span>' +
+            '<span class="tag" style="background:' + m.c + '22;color:' + m.c + '">' + m.code + '</span>' +
+            (m.wedge ? '<span class="tag badge-green">Oct 6 scope</span>'
+                     : '<span class="tag" style="background:var(--ink4);color:var(--text3)">out of 2026</span>') +
+            '<span style="flex:1"></span>' +
+            '<span style="font-family:var(--font-mono);font-size:13px;color:' + m.c + '">' + m.pct + '%</span></div>' +
+          '<div style="height:6px;background:var(--ink4);border-radius:3px;overflow:hidden;margin-bottom:6px">' +
+            '<div style="height:100%;width:' + m.pct + '%;background:' + m.c + '"></div></div>' +
+          '<div style="font-size:11.5px;color:var(--text2)">' + cnxEsc(m.scores) + ' · ' + cnxEsc(m.state) + '</div>' +
+          '<div style="font-size:11px;color:var(--amber);margin-top:3px">⚠ ' + cnxEsc(m.blocker) + '</div>' +
+        '</div>').join('') +
+      '<div style="font-size:11.5px;color:var(--text3);line-height:1.6;margin-top:12px;padding:9px 11px;' +
+        'background:var(--ink4);border-radius:8px">' + cnxEsc(CNIS_WEDGE) + '</div>' +
+      '<div style="font-size:11.5px;color:var(--text2);line-height:1.6;margin-top:9px">' +
+        '<strong>The sentence that matters:</strong> the scoring mathematics is sound and test-backed; ' +
+        'almost every input to it is not. That is concentrated in M01 collectors and the M02 evidence bridge.</div>' +
+    '</div>';
+}
+(function () {
+  const _p = buildView;
+  buildView = function (id) { const o = _p.apply(this, arguments); if (id === 'cnx-cnis') buildCnisModules(); return o; };
+  if (currentView === 'cnx-cnis') buildCnisModules();
+})();
+</script>
+
+<script>
+/* Folder drill-down inside the tab itself.
+   The earlier panel only showed chips that threw you over to Memory Dump.
+   This keeps you where you are: pick a folder, its items open underneath.
+   CyberNeurix spans website + CNIS, since both are that side of the business. */
+const DRILL_SETS = {
+  esec:        { groups:['esec'],            title:'ESecurityIn — Folders' },
+  cyberneurix: { groups:['website','cnis'],  title:'CyberNeurix — Folders' },
+};
+const _drillOpen = {};        // viewId -> selected cat id
+
+function drillItems(catId) {
+  const kids = (CNX_TAXONOMY.find(g => g.id === catId) || {}).children || [];
+  const ids = [catId].concat(kids.map(c => c.id));
+  const out = [];
+  gd('neurix.captures', []).forEach((c, i) => { if (ids.indexOf(c.cat) !== -1)
+    out.push({ kind:'capture', text:c.text || '(attachment)', cat:c.cat, t:c.t,
+      thumb:(c.attachment && c.attachment.type && c.attachment.type.indexOf('image/')===0) ? c.attachment.dataUrl : null }); });
+  noteAll().forEach(n => { if (!n.trashed && ids.indexOf(n.cat) !== -1)
+    out.push({ kind:'note', text:n.title || n.text, cat:n.cat, t:n.u, thumb:null }); });
+  return out.sort((a, b) => b.t - a.t);
+}
+
+function drillSelect(viewId, catId) {
+  _drillOpen[viewId] = (_drillOpen[viewId] === catId) ? null : catId;
+  drillRender(viewId);
+}
+
+function drillRender(viewId) {
+  const set = DRILL_SETS[viewId.indexOf('academy') === 0 ? 'esec' : 'cyberneurix'];
+  const host = document.getElementById('view-' + viewId);
+  if (!host || !set) return;
+  let el = document.getElementById('drill-' + viewId);
+  if (!el) { el = document.createElement('div'); el.className = 'card'; el.id = 'drill-' + viewId; host.appendChild(el); }
+
+  const sel = _drillOpen[viewId] || null;
+  const groups = set.groups.map(id => CNX_TAXONOMY.find(g => g.id === id)).filter(Boolean);
+  const total = groups.reduce((a, g) => a + drillItems(g.id).length, 0);
+
+  let html = '<div class="card-title">' + cnxEsc(set.title) +
+    ' <span style="color:var(--text3);font-weight:400;font-size:9px">' + total +
+    ' items filed · click a folder to open it here</span></div>';
+
+  groups.forEach(g => {
+    html += '<div style="margin-bottom:10px">' +
+      '<div onclick="drillSelect(\'' + viewId + '\',\'' + g.id + '\')" ' +
+        'style="display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;cursor:pointer;' +
+        'background:' + (sel === g.id ? 'var(--cyan-lo)' : 'var(--ink4)') + '">' +
+        '<span>' + g.icon + '</span>' +
+        '<span style="flex:1;font-size:12.5px;font-weight:500;color:' + (sel === g.id ? 'var(--cyan-hi)' : 'var(--text)') + '">' +
+          cnxEsc(g.label) + '</span>' +
+        '<span style="font-family:var(--font-mono);font-size:10px;color:var(--text3)">' +
+          drillItems(g.id).length + '</span></div>' +
+      '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;padding-left:6px">' +
+        (g.children || []).map(c => {
+          const n = drillItems(c.id).length;
+          const on = sel === c.id;
+          return '<span onclick="drillSelect(\'' + viewId + '\',\'' + c.id + '\')" ' +
+            'style="cursor:pointer;font-size:11px;padding:5px 10px;border-radius:7px;border:1px solid ' +
+            (on ? 'var(--cyan)' : 'var(--rule2)') + ';color:' + (on ? 'var(--cyan-hi)' : 'var(--text2)') +
+            ';background:' + (on ? 'var(--cyan-lo)' : 'transparent') + '">' +
+            cnxEsc(c.label) + ' · ' + n + '</span>';
+        }).join('') + '</div></div>';
+  });
+
+  if (sel) {
+    const items = drillItems(sel).slice(0, 25);
+    html += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--rule)">' +
+      '<div style="font-family:var(--font-mono);font-size:9px;letter-spacing:1.4px;text-transform:uppercase;' +
+        'color:var(--text3);margin-bottom:8px">' + cnxEsc(taxLabel(sel)) + '</div>' +
+      (items.length ? items.map(i =>
+        '<div style="display:flex;gap:9px;padding:8px 0;border-bottom:1px solid var(--rule);align-items:flex-start">' +
+          (i.thumb ? '<img src="' + i.thumb + '" style="width:38px;height:38px;object-fit:cover;border-radius:6px;' +
+            'border:1px solid var(--rule);flex-shrink:0">' : '') +
+          '<span class="tag ' + (i.kind === 'note' ? 'badge-blue' : 'badge-amber') + '" style="flex-shrink:0">' +
+            i.kind + '</span>' +
+          '<span style="flex:1;font-size:12px;color:var(--text2);line-height:1.55">' +
+            cnxEsc(i.text.replace(/\s+/g, ' ').slice(0, 160)) + '</span>' +
+          '<span style="font-family:var(--font-mono);font-size:9px;color:var(--text3);flex-shrink:0">' +
+            new Date(i.t).toLocaleDateString([], { month:'short', day:'numeric' }) + '</span></div>').join('')
+        : '<div class="empty" style="padding:14px 0">Nothing filed here yet.</div>') +
+      '<div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">' +
+        '<button class="btn btn-gold" style="font-size:11px" onclick="switchView(\'capture\')">✦ Capture into this</button>' +
+        '<button class="btn" style="font-size:11px" onclick="mdSelectCat(\'' + sel + '\');switchView(\'memory\')">Open in Memory Dump →</button>' +
+      '</div></div>';
+  }
+  el.innerHTML = html;
+}
+
+(function () {
+  const VIEWS = ['academy','academy-content','academy-interactions','academy-checklist',
+                 'cyberneurix','cnx-website','cnx-cnis','cnx-blogging','cnx-content'];
+  const _p = buildView;
+  buildView = function (id) {
+    const o = _p.apply(this, arguments);
+    if (VIEWS.indexOf(id) !== -1) {
+      // retire the older chip-only panels so there is one folder view, not two
+      ['esec-tax-' + id, 'cnx-tax-' + id, 'esec-tax', 'cnxc-tax'].forEach(x => {
+        const e = document.getElementById(x); if (e) e.remove();
+      });
+      drillRender(id);
+    }
+    return o;
+  };
+  if (VIEWS.indexOf(currentView) !== -1) buildView(currentView);
+})();
+</script>
+
+<script>
+/* Two stale arrays, both fixed here.
+   1. The `cnis` taxonomy group listed RixShield (which does not exist) and
+      omitted RixIntel and RixNexis, so CyberNeurix drilled into a folder for a
+      fictional module while two real ones had nowhere to file.
+   2. The sprint kanban ran off the old four-product PRODUCTS list. It now runs
+      off the six real modules, with stages that match how CNIS modules actually
+      progress, seeded from the measured build percentages. */
+
+// ── 1. Taxonomy ──
+(function fixCnisTaxonomy() {
+  const g = CNX_TAXONOMY.find(x => x.id === 'cnis');
+  if (!g) return;
+  const wanted = [
+    { id:'cnis-kernel',    label:'Scoring Kernel (NEURIX v3)' },
+    { id:'cnis-rixtrace',  label:'M01 RixTrace — NEURIX' },
+    { id:'cnis-rixcontrol',label:'M02 RixControl — NORMA' },
+    { id:'cnis-rixintel',  label:'M03 RixIntel — SYNTRA' },
+    { id:'cnis-rixnexis',  label:'M04 RixNexis — INFERA' },
+    { id:'cnis-rixone',    label:'M05 RixOne — PRAXIS' },
+    { id:'cnis-rixlogix',  label:'M06 RixLogix — VERITA' },
+  ];
+  g.children = wanted;
+  // Rebuild the label index so taxLabel()/pickers see the new folders.
+  wanted.forEach(c => { TAX_INDEX[c.id] = { label:c.label, icon:g.icon, parent:'cnis' }; });
+  delete TAX_INDEX['cnis-rixshield'];
+  // Anything previously filed under the removed folder is not orphaned — it is
+  // moved up to the CNIS group rather than silently disappearing from view.
+  const caps = gd('neurix.captures', []); let moved = false;
+  caps.forEach(c => { if (c.cat === 'cnis-rixshield') { c.cat = 'cnis'; moved = true; } });
+  if (moved) sd('neurix.captures', caps);
+  const ns = noteAll(); let nmoved = false;
+  ns.forEach(n => { if (n.cat === 'cnis-rixshield') { n.cat = 'cnis'; nmoved = true; } });
+  if (nmoved) noteSave(ns);
+})();
+
+// ── 2. Sprint kanban on the six real modules ──
+const CNIS_STAGES = ['Design of Record','Engine / Core Logic','Data & Evidence Inputs',
+                     'Integration','Calibration','Testing & QA','Go-Live'];
+(function fixSprintKanban() {
+  if (typeof PRODUCTS === 'undefined' || !Array.isArray(PRODUCTS)) return;
+  const defs = [
+    { id:'m01', name:'M01 RixTrace',   c:'var(--red)',    pct:75 },
+    { id:'m02', name:'M02 RixControl', c:'var(--blue)',   pct:60 },
+    { id:'m03', name:'M03 RixIntel',   c:'var(--purple)', pct:20 },
+    { id:'m04', name:'M04 RixNexis',   c:'var(--teal)',   pct:10 },
+    { id:'m05', name:'M05 RixOne',     c:'var(--amber)',  pct:5  },
+    { id:'m06', name:'M06 RixLogix',   c:'var(--gold)',   pct:5  },
+  ];
+  PRODUCTS.length = 0;
+  defs.forEach(d => {
+    PRODUCTS.push({ id:d.id, name:d.name, c:d.c, targetWeeks:null,
+                    desc:'', sprints:CNIS_STAGES.slice() });
+    // Seed each stage from the measured percentage, but never overwrite a state
+    // you have already set by hand.
+    const doneCount = Math.round(d.pct / 100 * CNIS_STAGES.length);
+    CNIS_STAGES.forEach((_, i) => {
+      const key = 'prod.' + d.id + '.s' + i;
+      if (gd(key, null) !== null) return;
+      sd(key, i < doneCount ? 'Done' : (i === doneCount ? 'In Progress' : 'Not Started'));
+    });
+  });
+})();
+
+(function rerender() {
+  const _p = buildView;
+  buildView = function (id) {
+    const o = _p.apply(this, arguments);
+    if (id === 'cnx-cnis' && typeof buildCnisModules === 'function') buildCnisModules();
+    return o;
+  };
+  if (currentView === 'cnx-cnis') buildView('cnx-cnis');
+  if (currentView === 'memory' && typeof buildMemoryDump === 'function') buildMemoryDump();
+})();
+</script>
+
+<script>
+/* Hashtag auto-filing.
+   Every taxonomy group and sub-folder is addressable as a hashtag, so typing
+   "#CyberNeurix #Migration" while capturing files the note into
+   CyberNeurix Website > Migration without touching the picker. Filing that
+   needs a dropdown does not happen; filing you can type does.
+   Sub-folders win over parents, and the longest match wins, so #RixTrace beats
+   a bare #CNIS. Hashtags stay in the text — they read naturally and remain
+   searchable. */
+const TAG_STOP = new Set(['and','the','of','my','core','product','website']);
+
+function taxHashIndex() {
+  const idx = {};                      // key -> { cat, depth, len }
+  const put = (key, cat, depth) => {
+    const k = String(key).toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (k.length < 3) return;
+    const prev = idx[k];
+    // deeper (sub-folder) wins; then longer key wins
+    if (!prev || depth > prev.depth || (depth === prev.depth && k.length > prev.len))
+      idx[k] = { cat, depth, len: k.length };
+  };
+  const addNode = (node, depth) => {
+    const label = String(node.label || '');
+    put(label, node.id, depth);                                  // whole label
+    label.split(/[^A-Za-z0-9]+/).forEach(w => {                  // and each real word
+      if (w.length > 2 && !TAG_STOP.has(w.toLowerCase())) put(w, node.id, depth);
+    });
+  };
+  CNX_TAXONOMY.forEach(g => { addNode(g, 0); (g.children || []).forEach(c => addNode(c, 1)); });
+  // A few names you would actually type that no label spells out.
+  [['cybersecurity','upskill'],['cyberneurix','website'],['esecurityin','esec'],
+   ['cnis','cnis'],['kryptonite','kryptonite'],['personal','personal']]
+    .forEach(p => { if (!idx[p[0]] || idx[p[0]].depth === 0) idx[p[0]] = { cat:p[1], depth:0, len:p[0].length }; });
+  return idx;
+}
+
+/** Pull #hashtags out of text and resolve the best-matching folder. */
+function autoClassify(text) {
+  const raw = String(text || '').match(/#[A-Za-z0-9_\-]+/g) || [];
+  const tags = raw.map(t => t.slice(1));
+  if (!tags.length) return { cat:'', tags:[], matched:null };
+  const idx = taxHashIndex();
+  let best = null;
+  tags.forEach(t => {
+    const hit = idx[t.toLowerCase().replace(/[^a-z0-9]/g, '')];
+    if (!hit) return;
+    if (!best || hit.depth > best.depth || (hit.depth === best.depth && hit.len > best.len)) best = hit;
+  });
+  return { cat: best ? best.cat : '', tags, matched: best ? taxLabel(best.cat) : null };
+}
+window.autoClassify = autoClassify;
+
+/* Apply on every capture path: the Capture tab, the ⌘J overlay, and anything
+   RixAI files. A folder you picked by hand always wins over an inferred one. */
+(function hookCaptureSaves() {
+  if (typeof capSave === 'function') {
+    const _c = capSave;
+    capSave = function () {
+      const ta = document.getElementById('cap-text'), sel = document.getElementById('cap-cat');
+      if (ta && sel && !sel.value) {
+        const a = autoClassify(ta.value);
+        if (a.cat) sel.value = a.cat;
+        const t = document.getElementById('cap-tags');
+        if (t && a.tags.length && !t.value.trim()) t.value = a.tags.join(', ');
+      }
+      return _c.apply(this, arguments);
+    };
+  }
+  if (typeof window.cnxSaveCapture === 'function') {
+    const _s = window.cnxSaveCapture;
+    window.cnxSaveCapture = function (keepOpen) {
+      const ta = document.getElementById('cnx-capture-text');
+      const tg = document.getElementById('cnx-capture-tags');
+      if (ta) {
+        const a = autoClassify(ta.value);
+        if (a.tags.length && tg && !tg.value.trim()) tg.value = a.tags.join(', ');
+        if (a.cat) window._cnxPendingCat = a.cat;
+      }
+      const r = _s.apply(this, arguments);
+      if (window._cnxPendingCat) {                    // stamp the folder on the row just written
+        const caps = gd('neurix.captures', []);
+        if (caps.length && !caps[caps.length - 1].cat) {
+          caps[caps.length - 1].cat = window._cnxPendingCat;
+          sd('neurix.captures', caps);
+        }
+        window._cnxPendingCat = null;
+      }
+      return r;
+    };
+  }
+})();
+
+/* Live feedback while typing, plus a list of what is addressable. */
+function capHashHint() {
+  const ta = document.getElementById('cap-text');
+  const el = document.getElementById('cap-hash-hint');
+  if (!ta || !el) return;
+  const a = autoClassify(ta.value);
+  el.innerHTML = a.matched
+    ? '<span style="color:var(--green)">→ files into <strong>' + cnxEsc(a.matched) + '</strong></span>'
+    : (a.tags.length ? '<span style="color:var(--text3)">#' + a.tags.map(cnxEsc).join(' #') +
+        ' — no folder matched, will stay Unfiled</span>' : '');
+}
+(function installHashUI() {
+  const _b = typeof buildCapture === 'function' ? buildCapture : null;
+  if (!_b) return;
+  buildCapture = function () {
+    _b.apply(this, arguments);
+    const ta = document.getElementById('cap-text');
+    if (ta && !document.getElementById('cap-hash-hint')) {
+      const h = document.createElement('div');
+      h.id = 'cap-hash-hint';
+      h.style.cssText = 'font-size:11px;margin-top:6px;min-height:15px';
+      ta.parentNode.insertBefore(h, ta.nextSibling);
+      ta.addEventListener('input', capHashHint);
+
+      const legend = document.createElement('details');
+      legend.style.cssText = 'margin-top:8px';
+      legend.innerHTML = '<summary style="cursor:pointer;font-size:11px;color:var(--text3)">' +
+        'Hashtags you can use</summary><div style="display:flex;flex-wrap:wrap;gap:5px;margin-top:8px">' +
+        CNX_TAXONOMY.map(g =>
+          '<span class="tag badge-blue">#' + g.label.replace(/[^A-Za-z0-9]/g, '') + '</span>' +
+          (g.children || []).map(c =>
+            '<span class="tag badge-amber">#' + c.label.split(/[—(]/)[0].trim().replace(/[^A-Za-z0-9]/g, '') + '</span>'
+          ).join('')).join('') + '</div>';
+      ta.parentNode.insertBefore(legend, h.nextSibling);
+    }
+    capHashHint();
+  };
+  if (currentView === 'capture') buildCapture();
+})();
+</script>
+
+<script>
+/* ── 30-DAY DIGEST BACKFILL ──────────────────────────────────────────────
+   RixAI had one day of memory. This walks the last 30 days, writes a digest
+   for every day that actually has records, and skips days already done.
+   Sequential with a pause between calls — firing 30 requests at once would
+   rate-limit and half of them would come back empty. */
+let _bfRunning = false;
+async function digestBackfill(days) {
+  if (_bfRunning) return;
+  _bfRunning = true;
+  days = days || 30;
+  const el = document.getElementById('digest-bf-state');
+  const say = m => { if (el) el.textContent = m; };
+
+  const todo = [];
+  for (let i = 1; i <= days; i++) {
+    const k = localDateKey(new Date(Date.now() - i * 864e5));
+    if (gd('digest.' + k, null)) continue;             // already written
+    if (!digestRecordsFor(k).length) continue;         // nothing happened; do not invent a day
+    todo.push(k);
+  }
+  if (!todo.length) { say('Nothing to backfill — every day with records already has a digest.'); _bfRunning = false; return; }
+
+  let done = 0, failed = 0;
+  for (const k of todo) {
+    say('Writing ' + k + '  (' + (done + 1) + ' of ' + todo.length + ')…');
+    try { const e = await digestGenerate(k, true); if (!e) failed++; } catch (err) { failed++; }
+    done++;
+    await new Promise(r => setTimeout(r, 900));        // be kind to the function
+  }
+  say('Done — ' + (done - failed) + ' digests written' + (failed ? ', ' + failed + ' failed' : '') + '.');
+  _bfRunning = false;
+  if (typeof digestRender === 'function') digestRender();
+}
+(function addBackfillButton() {
+  const _d = typeof digestRender === 'function' ? digestRender : null;
+  if (!_d) return;
+  digestRender = function () {
+    _d.apply(this, arguments);
+    const host = document.getElementById('evt-digest');
+    if (!host || document.getElementById('digest-bf-btn')) return;
+    const row = host.querySelector('div');
+    if (!row) return;
+    const b = document.createElement('button');
+    b.className = 'btn'; b.id = 'digest-bf-btn'; b.textContent = 'Backfill last 30 days';
+    b.onclick = () => digestBackfill(30);
+    row.appendChild(b);
+    const s = document.createElement('div');
+    s.id = 'digest-bf-state';
+    s.style.cssText = 'font-size:11px;color:var(--cyan);margin-top:8px;min-height:15px';
+    row.parentNode.insertBefore(s, row.nextSibling);
+  };
+})();
+
+
+/* ── GONG ────────────────────────────────────────────────────────────────
+   A gong is not a louder cymbal: the partials are inharmonic and stretched,
+   the strike blooms rather than peaking immediately, and the tail runs 15-20s
+   with shimmer as energy moves between modes. Modelled rather than sampled so
+   it needs no file. */
+function tndPlayGong(mult) {
+  mult = mult || 1;
+  try {
+    const ctx = tndGetAudioCtx(), t = ctx.currentTime;
+    const master = ctx.createGain(); master.gain.value = 0.5 * mult; master.connect(ctx.destination);
+
+    // Strike: a short band of noise, the mallet hitting bronze.
+    const nLen = Math.round(ctx.sampleRate * 0.12);
+    const nBuf = ctx.createBuffer(1, nLen, ctx.sampleRate);
+    const nd = nBuf.getChannelData(0);
+    for (let i = 0; i < nLen; i++) nd[i] = (Math.random() * 2 - 1) * (1 - i / nLen);
+    const nSrc = ctx.createBufferSource(); nSrc.buffer = nBuf;
+    const nbp = ctx.createBiquadFilter(); nbp.type = 'bandpass'; nbp.frequency.value = 320; nbp.Q.value = 1.1;
+    const nEnv = ctx.createGain();
+    nEnv.gain.setValueAtTime(0.5, t);
+    nEnv.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+    nSrc.connect(nbp); nbp.connect(nEnv); nEnv.connect(master);
+    nSrc.start(t); nSrc.stop(t + 0.25);
+
+    // Inharmonic modes — deliberately not integer multiples.
+    const F = 78;
+    const modes = [1, 1.52, 2.09, 2.71, 3.36, 4.13, 5.02, 6.21, 7.44];
+    const gains = [0.30, 0.22, 0.17, 0.13, 0.10, 0.075, 0.055, 0.04, 0.028];
+    modes.forEach((r, i) => {
+      [0, 0.0031].forEach((det, di) => {           // slight detune = slow beating
+        const o = ctx.createOscillator(); o.type = 'sine';
+        o.frequency.value = F * r * (1 + det);
+        const g = ctx.createGain();
+        const decay = 18 - i * 1.5;                 // low modes ring longest
+        const bloom = 0.06 + i * 0.02;              // higher modes arrive late — the bloom
+        g.gain.setValueAtTime(0, t);
+        g.gain.linearRampToValueAtTime(gains[i] * (di ? 0.6 : 1) * mult, t + bloom);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + Math.max(2, decay));
+        if (ctx.createStereoPanner) {
+          const p = ctx.createStereoPanner(); p.pan.value = (di ? 0.25 : -0.25) * (1 - i * 0.1);
+          o.connect(g); g.connect(p); p.connect(master);
+        } else { o.connect(g); g.connect(master); }
+        o.start(t); o.stop(t + Math.max(2, decay) + 0.2);
+      });
+    });
+  } catch (e) {}
+}
+let _gongTimer = null, _gongEvery = 0;
+function gongEvery(mins) {
+  clearInterval(_gongTimer); _gongEvery = mins;
+  document.querySelectorAll('.gong-int').forEach(b =>
+    b.classList.toggle('on', +b.dataset.m === mins));
+  const s = document.getElementById('gong-state');
+  if (!mins) { if (s) s.textContent = 'Interval off.'; return; }
+  if (s) s.textContent = 'Sounding every ' + mins + ' min.';
+  _gongTimer = setInterval(() => tndPlayGong(0.85), mins * 60000);
+}
+(function installGong() {
+  const root = document.querySelector('#view-tending .tnd-wrap');
+  if (!root || document.getElementById('tnd-gong')) return;
+  const css = document.createElement('style');
+  css.textContent =
+'#gong-strike{width:132px;height:132px;border-radius:50%;margin:6px auto 14px;cursor:pointer;display:flex;' +
+ 'align-items:center;justify-content:center;font-size:34px;user-select:none;' +
+ 'background:radial-gradient(circle at 38% 32%,#C9965A,#7A5A37 55%,#3a2a18);' +
+ 'border:2px solid rgba(233,228,216,.18);box-shadow:0 8px 30px rgba(0,0,0,.5),inset 0 2px 12px rgba(255,255,255,.12);' +
+ 'transition:transform .12s}' +
+'#gong-strike:active{transform:scale(.95)}' +
+'#gong-strike.ring{animation:gong-ring 1.1s ease-out}' +
+'@keyframes gong-ring{0%{box-shadow:0 8px 30px rgba(0,0,0,.5),0 0 0 0 rgba(201,150,90,.55)}' +
+ '100%{box-shadow:0 8px 30px rgba(0,0,0,.5),0 0 0 44px rgba(201,150,90,0)}}' +
+'.gong-int{padding:6px 13px;border-radius:7px;border:1px solid var(--tnd-line-strong);background:var(--tnd-ink);' +
+ 'color:var(--tnd-mist);font-size:12px;cursor:pointer;font-family:inherit}' +
+'.gong-int.on{border-color:var(--tnd-ember);color:var(--tnd-ember)}' +
+'@media(prefers-reduced-motion:reduce){#gong-strike.ring{animation:none}}';
+  document.head.appendChild(css);
+
+  const sec = document.createElement('details');
+  sec.className = 'tnd-accordion tnd-card'; sec.id = 'tnd-gong';
+  sec.innerHTML = '<summary>Gong</summary><div style="padding-top:16px">' +
+    '<p class="tnd-hint">Strike it and let it run out. Nothing is being measured.</p>' +
+    '<div id="gong-strike" onclick="tndPlayGong(1);this.classList.remove(\'ring\');void this.offsetWidth;this.classList.add(\'ring\')">🜂</div>' +
+    '<p class="tnd-field-label">Sound it on an interval</p>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">' +
+      [0,5,10,15,30].map(m => '<button class="gong-int' + (m===0?' on':'') + '" data-m="' + m +
+        '" onclick="gongEvery(' + m + ')">' + (m ? m + ' min' : 'Off') + '</button>').join('') +
+    '</div><p class="tnd-save-state" id="gong-state">Interval off.</p></div>';
+  const anchor = document.getElementById('tnd-flow');
+  root.insertBefore(sec, anchor ? anchor.nextSibling : null);
+})();
+
+
+/* ── ZEN GARDEN — warmer sand, softer rake, undo, and keep-it ──────────── */
+(function improveZen() {
+  const c = document.getElementById('tndZenCanvas');
+  if (!c || document.getElementById('zen-extra')) return;
+  const css = document.createElement('style');
+  css.textContent =
+'#tndZenCanvas{background:radial-gradient(ellipse at 42% 32%,#241d14 0%,#191410 55%,#120f0c 100%)!important;' +
+ 'box-shadow:inset 0 2px 26px rgba(0,0,0,.55);border-color:rgba(233,228,216,.14)!important}' +
+'#zen-extra{display:flex;gap:8px;justify-content:center;margin-top:8px;flex-wrap:wrap}';
+  document.head.appendChild(css);
+  const bar = document.createElement('div');
+  bar.id = 'zen-extra';
+  bar.innerHTML =
+    '<button class="tnd-zen-ctrl-btn" onclick="zenUndo()">↶ Undo</button>' +
+    '<button class="tnd-zen-ctrl-btn" onclick="zenKeep()">Keep this</button>' +
+    '<span id="zen-state" style="font-family:\'IBM Plex Mono\',monospace;font-size:11px;color:var(--tnd-mist);align-self:center"></span>';
+  c.parentNode.appendChild(bar);
+})();
+function zenUndo() {
+  // The garden keeps no stroke history of its own; clearing is the honest undo.
+  const s = document.getElementById('zen-state');
+  const btn = document.getElementById('tndZenClearBtn');
+  if (btn) btn.click();
+  if (s) { s.textContent = 'cleared'; setTimeout(() => { s.textContent = ''; }, 1800); }
+}
+function zenKeep() {
+  const c = document.getElementById('tndZenCanvas'); if (!c) return;
+  const caps = gd('neurix.captures', []);
+  caps.push({ text:'Zen garden — ' + new Date().toLocaleString(), tags:['zen'], cat:'kryptonite',
+    t:Date.now(), attachment:{ name:'zen.png', type:'image/png', size:0, dataUrl:c.toDataURL('image/png') } });
+  sd('neurix.captures', caps);
+  const s = document.getElementById('zen-state');
+  if (s) { s.textContent = 'kept'; setTimeout(() => { s.textContent = ''; }, 2200); }
+}
+</script>
+
+<script>
+/* ── ZEN GARDEN — full width, and driven by the pressure-sensitive ink engine.
+   The original canvas hard-caps itself at 420px inside a closure I cannot
+   reach, and stretching it with CSS would only blur it. So the garden is
+   rebuilt on inkAttach: it fills the column, sizes to the viewport, and gains
+   Apple Pencil pressure on the iPad — which the old one never had. */
+(function biggerZen() {
+  const old = document.getElementById('tndZenCanvas');
+  if (!old || document.getElementById('zenBig')) return;
+  const wrap = old.closest('.tnd-zen-canvas-wrap') || old.parentNode;
+
+  const css = document.createElement('style');
+  css.textContent =
+'#zenBig{width:100%;display:block;border-radius:14px;cursor:crosshair;touch-action:none;' +
+ 'background:radial-gradient(ellipse at 42% 30%,#241d14 0%,#191410 55%,#120f0c 100%);' +
+ 'border:1px solid rgba(233,228,216,.14);box-shadow:inset 0 2px 30px rgba(0,0,0,.55)}' +
+'.tnd-zen-canvas-wrap{max-width:none!important;width:100%}' +
+'#zen-tools{display:flex;gap:7px;flex-wrap:wrap;justify-content:center;margin-top:10px;align-items:center}';
+  document.head.appendChild(css);
+
+  old.style.display = 'none';                      // keep the original for its own controls
+  const c = document.createElement('canvas');
+  c.id = 'zenBig';
+  wrap.insertBefore(c, old);
+
+  // Roughly two-thirds of the viewport, never cramped, never absurd.
+  const h = Math.max(360, Math.min(620, Math.round(window.innerHeight * 0.62)));
+  const ink = inkAttach(c, { height: h, color: '#C9A87C', size: 1.6 });
+  window._zenInk = ink;
+
+  const tools = document.createElement('div');
+  tools.id = 'zen-tools';
+  tools.innerHTML =
+    ['#C9A87C','#7C9A85','#D79A52','#8A92A3','#E9E4D8','#6B8FA8']
+      .map(col => '<span onclick="_zenInk.setColor(\'' + col + '\')" style="width:22px;height:22px;' +
+        'border-radius:50%;background:' + col + ';cursor:pointer;border:2px solid transparent"></span>').join('') +
+    '<span style="width:1px;height:16px;background:var(--tnd-line);margin:0 3px"></span>' +
+    '<button class="tnd-zen-ctrl-btn" onclick="_zenInk.setSize(1)">Fine</button>' +
+    '<button class="tnd-zen-ctrl-btn" onclick="_zenInk.setSize(2.2)">Rake</button>' +
+    '<button class="tnd-zen-ctrl-btn" onclick="_zenInk.setSize(5)">Broad</button>' +
+    '<button class="tnd-zen-ctrl-btn" onclick="_zenInk.setErase(true)">Smooth</button>' +
+    '<button class="tnd-zen-ctrl-btn" onclick="_zenInk.clear()">Clear</button>' +
+    '<button class="tnd-zen-ctrl-btn" onclick="zenKeepBig()">Keep this</button>' +
+    '<span id="zenBigState" style="font-family:\'IBM Plex Mono\',monospace;font-size:11px;color:var(--tnd-mist)"></span>';
+  wrap.appendChild(tools);
+
+  const legacy = wrap.querySelector('.tnd-zen-controls');
+  if (legacy) legacy.style.display = 'none';
+  const swatches = wrap.querySelector('.tnd-zen-color-row');
+  if (swatches) swatches.style.display = 'none';
+  const label = document.getElementById('tndZenModeLabel');
+  if (label) label.textContent = 'Drag to rake. Apple Pencil pressure changes the line.';
+})();
+function zenKeepBig() {
+  if (!window._zenInk || _zenInk.isEmpty()) return;
+  const caps = gd('neurix.captures', []);
+  caps.push({ text:'Zen garden — ' + new Date().toLocaleString(), tags:['zen'], cat:'kryptonite',
+    t:Date.now(), attachment:{ name:'zen.png', type:'image/png', size:0, dataUrl:_zenInk.dataURL() } });
+  sd('neurix.captures', caps);
+  const s = document.getElementById('zenBigState');
+  if (s) { s.textContent = 'kept'; setTimeout(() => { s.textContent = ''; }, 2200); }
+}
+
+/* ── Run the 30-day backfill once, automatically, on the first load after this
+   update — so the history is there without you having to remember to click. */
+(function autoBackfillOnce() {
+  if (gd('digest.autoBackfill30', false)) return;
+  setTimeout(async function () {
+    if (typeof digestBackfill !== 'function') return;
+    sd('digest.autoBackfill30', true);          // set first: never loop on failure
+    try { await digestBackfill(30); } catch (e) { console.warn('backfill stopped:', e); }
+  }, 9000);                                      // let auth and the first sync settle
+})();
+</script>
+
+<script>
+/* The garden lives inside a <details>. inkAttach sizes on creation, and at that
+   moment the accordion is collapsed, so the canvas was measured at zero width
+   and drawing silently did nothing. Re-measure whenever it is opened, and once
+   on first paint. */
+(function refitZenOnOpen() {
+  const c = document.getElementById('zenBig');
+  if (!c) return;
+  const det = c.closest('details');
+  const refit = () => { if (c.offsetWidth > 0) window.dispatchEvent(new Event('resize')); };
+  if (det) det.addEventListener('toggle', () => { if (det.open) setTimeout(refit, 60); });
+  // Also cover the case where Tending is opened with the section already expanded.
+  const _p = buildView;
+  buildView = function (id) { const o = _p.apply(this, arguments); if (id === 'tending') setTimeout(refit, 120); return o; };
+  setTimeout(refit, 400);
+})();
+</script>
+
 </body>
 </html>
