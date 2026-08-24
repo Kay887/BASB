@@ -10458,5 +10458,105 @@ async function appleReconnect() { await fetchAppleEvents(true); appleStatusRende
 })();
 </script>
 
+<script>
+/* Clicking a parent nav item opens its FIRST SUB-VIEW, not the parent — so the
+   taxonomy panels rendered into #view-academy and #view-cyberneurix were
+   effectively invisible. Render them into whichever view is actually on screen. */
+function taxPanelInto(viewId, groupId, title, containerId) {
+  const host = document.getElementById('view-' + viewId);
+  if (!host) return;
+  let el = document.getElementById(containerId + '-' + viewId);
+  if (!el) { el = document.createElement('div'); el.id = containerId + '-' + viewId; host.appendChild(el); }
+  el.innerHTML = taxPanel(groupId, title);
+}
+const ESEC_VIEWS = ['academy','academy-content','academy-interactions','academy-checklist'];
+const CNX_VIEWS  = ['cyberneurix','cnx-website','cnx-cnis','cnx-blogging','cnx-content'];
+
+(function () {
+  const _p = buildView;
+  buildView = function (id) {
+    const out = _p.apply(this, arguments);
+    if (ESEC_VIEWS.indexOf(id) !== -1) taxPanelInto(id, 'esec', 'ESecurityIn — Folders', 'esec-tax');
+    if (CNX_VIEWS.indexOf(id)  !== -1) taxPanelInto(id, 'website', 'CyberNeurix — Folders', 'cnx-tax');
+    return out;
+  };
+  if (ESEC_VIEWS.indexOf(currentView) !== -1 || CNX_VIEWS.indexOf(currentView) !== -1) buildView(currentView);
+})();
+</script>
+
+<style>
+/* The manifest sets apple-mobile-web-app-status-bar-style: black-translucent,
+   which makes the web app draw UNDER the iOS status bar. A control fixed at
+   top:14px therefore sits beneath the clock and is not tappable — zooming
+   shifts the layout enough to reach it, which is exactly the reported symptom.
+   Offsetting by the safe-area inset puts it back on screen. 44px is also
+   Apple's minimum tap target; 38px was under it. */
+@media (max-width: 860px) {
+  #mobile-nav-toggle {
+    top:  calc(env(safe-area-inset-top,  0px) + 12px) !important;
+    left: calc(env(safe-area-inset-left, 0px) + 12px) !important;
+    width: 44px !important; height: 44px !important; font-size: 19px !important;
+  }
+  #content-col { padding-top: calc(env(safe-area-inset-top, 0px) + 68px) !important; }
+  #sidebar { padding-top: env(safe-area-inset-top, 0px); }
+}
+/* Keep the floating controls clear of the home indicator too. */
+@media (max-width: 1100px) {
+  #cnx-amb   { bottom: calc(env(safe-area-inset-bottom, 0px) + 16px) !important; }
+  #pomo-widget { bottom: calc(env(safe-area-inset-bottom, 0px) + 16px) !important; }
+  #rx-float  { bottom: calc(env(safe-area-inset-bottom, 0px) + 72px) !important; }
+}
+</style>
+
+<script>
+/* iOS standalone (Home Screen) mode silently drops target="_blank" — there is
+   no tab to open into, so external links do nothing when tapped. Route them
+   through window.open, falling back to same-window navigation if that is
+   blocked too, so a link always goes somewhere. Only affects standalone; in a
+   normal browser tab the native behaviour is left alone. */
+(function externalLinksInStandalone() {
+  const standalone = window.navigator.standalone === true ||
+    (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+  if (!standalone) return;
+  document.addEventListener('click', function (e) {
+    const a = e.target && e.target.closest && e.target.closest('a[href]');
+    if (!a) return;
+    const href = a.getAttribute('href') || '';
+    if (!/^https?:\/\//i.test(href)) return;                 // ignore in-app anchors
+    if (href.indexOf(location.origin) === 0) return;          // ignore same-origin
+    e.preventDefault();
+    const w = window.open(href, '_blank', 'noopener');
+    if (!w) location.href = href;                             // last resort
+  }, true);
+})();
+</script>
+
+<script>
+/* Three separate "looks unchanged" reports traced to caching, not missing code.
+   On a Home Screen web app iOS caches aggressively and a registered service
+   worker can pin an old page indefinitely. Check for a newer build on every
+   load and reload once when one is found, rather than relying on the user
+   knowing to clear website data. */
+(function keepBuildFresh() {
+  const BUILD = '2026-08-24-4';                       // bump when index.html changes
+  try {
+    if (localStorage.getItem('cnx_build') !== BUILD) {
+      localStorage.setItem('cnx_build', BUILD);
+      if ('caches' in window) caches.keys().then(k => k.forEach(c => caches.delete(c)));
+    }
+  } catch (e) {}
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => r.update()));
+  }
+  // A stale page pinned by an old worker: reload once, guarded so it can never loop.
+  window.addEventListener('pageshow', function (e) {
+    if (!e.persisted) return;
+    if (sessionStorage.getItem('cnx_reloaded')) return;
+    sessionStorage.setItem('cnx_reloaded', '1');
+    location.reload();
+  });
+})();
+</script>
+
 </body>
 </html>
