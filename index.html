@@ -12882,5 +12882,118 @@ if (typeof connectGoogleSearchConsole === 'function')
 })();
 </script>
 
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   CALENDAR AND DRIVE PANES
+
+   Both panes called Google directly from the browser using implicit-flow
+   tokens. Those tokens expire about an hour after the tab closes, and this
+   project moved to the server-side flow, so `gcalToken` and `gdriveToken` were
+   permanently null — the panes rendered their "connect first" empty state even
+   though the account was connected and syncing.
+
+   They now read the server-side mirrors: calendar_events, and drive_files via
+   the new drive-sync. Both paint on load, with the app closed and no token in
+   the browser.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+const DRIVE_SYNC_URL = 'https://hzpdbhufpceikcbqgpiv.functions.supabase.co/drive-sync';
+
+/* ── Calendar ────────────────────────────────────────────────────────────── */
+async function gCalUpcoming(days) {
+  if (!sbClient || !authUserId) return [];
+  const now = new Date().toISOString();
+  const until = new Date(Date.now() + (days || 7) * 864e5).toISOString();
+  const { data, error } = await sbClient.from('calendar_events')
+    .select('title,starts_at,ends_at,all_day,location')
+    .gte('starts_at', now).lte('starts_at', until)
+    .order('starts_at').limit(40);
+  if (error) { console.warn('calendar pane:', error.message); return []; }
+  return data || [];
+}
+
+/* ── Drive ───────────────────────────────────────────────────────────────── */
+async function gDriveRecent(n) {
+  if (!sbClient || !authUserId) return [];
+  const { data, error } = await sbClient.from('drive_files')
+    .select('name,mime_type,web_link,modified_at,size_bytes,owner')
+    .order('modified_at', { ascending: false }).limit(n || 15);
+  if (error) { console.warn('drive pane:', error.message); return []; }
+  return data || [];
+}
+
+function driveIcon(mime) {
+  const m = String(mime || '');
+  if (m.indexOf('folder') >= 0) return '📁';
+  if (m.indexOf('spreadsheet') >= 0) return '📊';
+  if (m.indexOf('presentation') >= 0) return '📽';
+  if (m.indexOf('document') >= 0) return '📝';
+  if (m.indexOf('pdf') >= 0) return '📕';
+  if (m.indexOf('image/') === 0) return '🖼';
+  if (m.indexOf('video/') === 0) return '🎬';
+  if (m.indexOf('markdown') >= 0 || m.indexOf('text/') === 0) return '📄';
+  return '📄';
+}
+function driveSize(b) {
+  if (!b) return '';
+  return b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB';
+}
+function relDay(iso) {
+  if (!iso) return '';
+  const d = new Date(iso), k = localDateKey(d);
+  if (k === localDateKey(new Date())) return 'today';
+  if (k === localDateKey(new Date(Date.now() - 864e5))) return 'yesterday';
+  const days = Math.round((Date.now() - d.getTime()) / 864e5);
+  if (days < 7) return days + 'd ago';
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+/** Ask the server to refresh the Drive mirror now, then repaint. */
+async function gDriveRefresh(btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Syncing…'; }
+  try {
+    await fetch(DRIVE_SYNC_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SUPA_KEY, 'apikey': SUPA_KEY },
+      body: '{}',
+    });
+  } catch (e) { console.warn('drive refresh:', e.message); }
+  if (typeof buildView === 'function' && currentView) buildView(currentView);
+  if (btn) { btn.disabled = false; btn.textContent = 'Refresh'; }
+}
+
+/* The old fetchers backed the mini-calendar and other widgets; point them at
+   the mirror so everything downstream shows the same data. */
+if (typeof fetchGoogleEvents === 'function') {
+  fetchGoogleEvents = async function () {
+    const evs = await gCalUpcoming(7);
+    // {title, start, source} is what #cal-events and buildMiniCalendar consume —
+    // not the raw Google shape, which is what the browser used to receive.
+    return evs.map(e => ({
+      title: e.title || '(no title)',
+      start: e.starts_at,
+      source: 'Google',
+    }));
+  };
+}
+if (typeof fetchGoogleDriveFiles === 'function') {
+  fetchGoogleDriveFiles = async function () {
+    const fs = await gDriveRecent(15);
+    return { files: fs.map(f => ({
+      id: f.web_link, name: f.name, mimeType: f.mime_type,
+      webViewLink: f.web_link, modifiedTime: f.modified_at })) };
+  };
+}
+// The panes are connected whenever the server mirror has data, so the widgets
+// that gated on a browser token stop reporting "not connected".
+try { gcalToken = 'server'; gdriveToken = 'server'; } catch (e) { /* const */ }
+
+(function panesInstall() {
+  // Nothing to repaint here: the app's own renderers now receive real data
+  // because the fetchers above read the server mirrors. Keeping a second
+  // painter would only race them for the same nodes.
+})();
+</script>
+
 </body>
 </html>
