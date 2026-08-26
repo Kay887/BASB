@@ -12840,7 +12840,10 @@ async function gConnect() {
 
 connectGoogleCalendar = gConnect;
 connectGoogleDrive    = gConnect;
-if (typeof connectGoogleGmail === 'function') connectGoogleGmail = gConnect;
+// The Gmail button is named connectGmail, not connectGoogleGmail. A guarded
+// assignment to the wrong name silently did nothing, so Gmail alone kept
+// calling the dead client and kept returning 403 while the others were fixed.
+if (typeof connectGmail === 'function') connectGmail = gConnect;
 
 /* Analytics and Search Console ask for scopes the server-side flow does not
    request, so they cannot ride along. Say so plainly instead of sending you to
@@ -12852,8 +12855,8 @@ function gNotWired(name) {
         'requesting its scope in the google-oauth function and reconnecting once.');
 }
 connectGoogleAnalytics = () => gNotWired('Google Analytics');
-if (typeof connectGoogleSearchConsole === 'function')
-  connectGoogleSearchConsole = () => gNotWired('Search Console');
+if (typeof connectSearchConsole === 'function')
+  connectSearchConsole = () => gNotWired('Search Console');
 
 /* Reflect reality on the buttons themselves. */
 (function gPaintButtons() {
@@ -12992,6 +12995,671 @@ try { gcalToken = 'server'; gdriveToken = 'server'; } catch (e) { /* const */ }
   // Nothing to repaint here: the app's own renderers now receive real data
   // because the fetchers above read the server mirrors. Keeping a second
   // painter would only race them for the same nodes.
+})();
+</script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   DESK — calendar, files and mail in one place
+
+   These three lived in three different tabs: the calendar buried in an
+   integrations pane, Drive inside REN, mail somewhere else again. Checking
+   "what is going on" meant three journeys, so it did not get done.
+
+   One view, under Today: a month you can actually look at, the day's agenda
+   beside it, then recent files and recent mail. All three read server-side
+   mirrors, so this paints with the app closed and no token in the browser.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+const GMAIL_SYNC_URL = 'https://hzpdbhufpceikcbqgpiv.functions.supabase.co/gmail-sync';
+let _deskMonth = null;         // Date anchored to the 1st of the shown month
+let _deskSel = null;           // yyyy-mm-dd the user clicked
+
+async function deskMail(n) {
+  if (!sbClient || !authUserId) return [];
+  const { data, error } = await sbClient.from('mail_messages')
+    .select('from_name,from_email,subject,snippet,received_at,unread,starred,web_link')
+    .order('received_at', { ascending: false }).limit(n || 12);
+  if (error) { console.warn('mail pane:', error.message); return []; }
+  return data || [];
+}
+
+/** Every event in the shown month, so the grid can mark the busy days. */
+async function deskMonthEvents(anchor) {
+  if (!sbClient || !authUserId) return [];
+  const from = new Date(Date.UTC(anchor.getFullYear(), anchor.getMonth(), 1));
+  const to = new Date(Date.UTC(anchor.getFullYear(), anchor.getMonth() + 1, 1));
+  const { data, error } = await sbClient.from('calendar_events')
+    .select('title,starts_at,ends_at,all_day,location')
+    .gte('starts_at', from.toISOString()).lt('starts_at', to.toISOString())
+    .order('starts_at').limit(300);
+  if (error) { console.warn('calendar month:', error.message); return []; }
+  return data || [];
+}
+
+function deskShiftMonth(delta) {
+  const a = _deskMonth || new Date();
+  _deskMonth = new Date(a.getFullYear(), a.getMonth() + delta, 1);
+  _deskSel = null;
+  deskPaint();
+}
+function deskPickDay(key) { _deskSel = (_deskSel === key ? null : key); deskPaint(); }
+
+async function deskRefresh(which, btn) {
+  const url = which === 'mail' ? GMAIL_SYNC_URL : DRIVE_SYNC_URL;
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  try {
+    await fetch(url, { method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SUPA_KEY, 'apikey': SUPA_KEY },
+      body: '{}' });
+  } catch (e) { console.warn('refresh:', e.message); }
+  if (btn) { btn.disabled = false; btn.textContent = '↻'; }
+  deskPaint();
+}
+
+function deskTime(iso, allDay) {
+  if (allDay) return 'all day';
+  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+async function deskPaint() {
+  const host = document.getElementById('view-desk');
+  if (!host || !host.classList.contains('active')) return;
+
+  const anchor = _deskMonth || new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  _deskMonth = anchor;
+  const [events, files, mail] = await Promise.all([
+    deskMonthEvents(anchor), gDriveRecent(12), deskMail(12),
+  ]);
+
+  /* ── month grid ── */
+  const byDay = {};
+  events.forEach(e => { const k = localDateKey(new Date(e.starts_at)); (byDay[k] = byDay[k] || []).push(e); });
+  const first = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+  const startPad = (first.getDay() + 6) % 7;                 // Monday-first
+  const daysIn = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0).getDate();
+  const todayKeyStr = localDateKey(new Date());
+
+  let cells = '';
+  for (let i = 0; i < startPad; i++) cells += '<div class="dk-cell dk-mute"></div>';
+  for (let d = 1; d <= daysIn; d++) {
+    const date = new Date(anchor.getFullYear(), anchor.getMonth(), d);
+    const k = localDateKey(date);
+    const n = (byDay[k] || []).length;
+    cells += '<div class="dk-cell' + (k === todayKeyStr ? ' dk-today' : '') +
+      (k === _deskSel ? ' dk-sel' : '') + '" onclick="deskPickDay(\'' + k + '\')">' +
+      '<span class="dk-num">' + d + '</span>' +
+      (n ? '<span class="dk-dots">' + '<i></i>'.repeat(Math.min(n, 3)) + '</span>' : '') +
+      '</div>';
+  }
+
+  /* ── agenda: the selected day, or from now on ── */
+  let agenda, agendaLabel;
+  if (_deskSel) {
+    agenda = (byDay[_deskSel] || []);
+    agendaLabel = new Date(_deskSel + 'T12:00:00')
+      .toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
+  } else {
+    const now = Date.now();
+    agenda = events.filter(e => new Date(e.starts_at).getTime() >= now).slice(0, 8);
+    agendaLabel = 'Next up';
+  }
+
+  const agendaHtml = agenda.length ? agenda.map(e =>
+    '<div class="dk-ev" onclick="deskOpenDay(\'' + localDateKey(new Date(e.starts_at)) + '\')">' +
+    '<span class="dk-ev-t">' + cnxEsc(deskTime(e.starts_at, e.all_day)) + '</span>' +
+    '<span class="dk-ev-n">' + cnxEsc(e.title) +
+    (e.location ? '<em>' + cnxEsc(String(e.location).slice(0, 44)) + '</em>' : '') + '</span></div>').join('')
+    : '<div class="dk-empty">Nothing scheduled.</div>';
+
+  _deskFiles = files; _deskMail = mail;
+  const unreadN = mail.filter(m => m.unread).length;
+  const busyDays = Object.keys(byDay).length;
+
+  host.innerHTML =
+    '<div class="dk-grid">' +
+      '<div class="card dk-cal">' +
+        '<div class="dk-head">' +
+          '<span class="dk-month">' + anchor.toLocaleDateString([], { month: 'long', year: 'numeric' }) + '</span>' +
+          '<span class="dk-nav"><button class="btn" onclick="deskShiftMonth(-1)">‹</button>' +
+          '<button class="btn" onclick="_deskMonth=null;_deskSel=null;deskPaint()">Today</button>' +
+          '<button class="btn" onclick="deskShiftMonth(1)">›</button></span>' +
+        '</div>' +
+        '<div class="dk-dow">' + ['M','T','W','T','F','S','S']
+          .map(d => '<span>' + d + '</span>').join('') + '</div>' +
+        '<div class="dk-month-grid">' + cells + '</div>' +
+        '<div class="dk-cal-foot">' +
+          '<span>' + events.length + ' event' + (events.length === 1 ? '' : 's') +
+          ' · ' + busyDays + ' day' + (busyDays === 1 ? '' : 's') + ' busy</span>' +
+          '<button class="btn dk-cp" onclick="deskOpenDay(_deskSel)">Open in Google ↗</button>' +
+        '</div>' +
+      '</div>' +
+
+      '<div class="card dk-agenda">' +
+        '<div class="dk-head"><span class="dk-sub">' + cnxEsc(agendaLabel) + '</span>' +
+          (_deskSel ? '<button class="btn dk-cp" onclick="_deskSel=null;deskPaint()">Clear</button>' : '') +
+        '</div>' + agendaHtml +
+      '</div>' +
+
+      '<div class="card dk-stream">' +
+        '<div class="dk-head">' +
+          '<span class="dk-tabs">' +
+            '<span class="dk-tab' + (_deskTab === 'mail' ? ' on' : '') +
+              '" onclick="deskSwitch(\'mail\')">Mail' +
+              (unreadN ? '<i>' + unreadN + '</i>' : '') + '</span>' +
+            '<span class="dk-tab' + (_deskTab === 'files' ? ' on' : '') +
+              '" onclick="deskSwitch(\'files\')">Files' +
+              (files.length ? '<i>' + files.length + '</i>' : '') + '</span>' +
+          '</span>' +
+          '<button class="btn dk-cp" onclick="deskRefresh(\'' +
+            (_deskTab === 'mail' ? 'mail' : 'drive') + '\',this)">↻</button>' +
+        '</div>' +
+        '<div class="dk-tools">' +
+          '<input class="inp dk-search" placeholder="Filter…" value="' + cnxEsc(_deskQ) +
+            '" oninput="deskFilter(this.value)">' +
+          (_deskTab === 'mail'
+            ? '<button class="btn dk-chip' + (_deskUnreadOnly ? ' dk-chip-on' : '') +
+              '" onclick="deskToggleUnread(this)">Unread</button>' : '') +
+        '</div>' +
+        '<div id="dk-list-body"></div>' +
+      '</div>' +
+    '</div>' +
+    deskSetupCard();
+
+  deskPaintLists();
+}
+
+(function deskInstall() {
+  const css = document.createElement('style');
+  css.textContent =
+'.dk-grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:14px}' +
+'@media(max-width:900px){.dk-grid{grid-template-columns:1fr}}' +
+'.dk-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}' +
+'.dk-month{font-family:var(--font-display);font-size:19px;color:var(--text)}' +
+'.dk-nav{display:flex;gap:5px}' +
+'.dk-nav .btn{padding:5px 10px;font-size:11px;min-height:0}' +
+'.dk-dow{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;margin-bottom:5px}' +
+'.dk-dow span{text-align:center;font-family:var(--font-mono);font-size:9px;color:var(--text3)}' +
+'.dk-month-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}' +
+'.dk-cell{aspect-ratio:1;border-radius:7px;border:1px solid transparent;display:flex;' +
+ 'flex-direction:column;align-items:center;justify-content:center;gap:3px;cursor:pointer;' +
+ 'background:var(--ink4)}' +
+'.dk-cell:hover{border-color:var(--rule2)}' +
+'.dk-mute{background:transparent;cursor:default}' +
+'.dk-num{font-family:var(--font-mono);font-size:11.5px;color:var(--text2)}' +
+'.dk-today{background:var(--cyan-lo);border-color:var(--cyan)}' +
+'.dk-today .dk-num{color:var(--cyan-hi);font-weight:600}' +
+'.dk-sel{border-color:var(--gold);background:rgba(224,179,106,.14)}' +
+'.dk-dots{display:flex;gap:2px}' +
+'.dk-dots i{width:4px;height:4px;border-radius:50%;background:var(--gold)}' +
+'.dk-ev{display:flex;gap:10px;align-items:baseline;padding:9px 0;border-bottom:1px solid var(--rule)}' +
+'.dk-ev-t{font-family:var(--font-mono);font-size:10px;color:var(--gold);flex-shrink:0;min-width:52px}' +
+'.dk-ev-n{font-size:13px;color:var(--text2);line-height:1.5}' +
+'.dk-ev-n em{display:block;font-style:normal;font-size:10px;color:var(--text3)}' +
+'.dk-row{display:flex;gap:10px;align-items:center;padding:9px 0;' +
+ 'border-bottom:1px solid var(--rule);text-decoration:none}' +
+'.dk-ic{font-size:14px;flex-shrink:0;color:var(--text3)}' +
+'.dk-main{flex:1;min-width:0}' +
+'.dk-main b{display:block;font-weight:400;font-size:12.5px;color:var(--text2);' +
+ 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+'.dk-main small{font-family:var(--font-mono);font-size:9px;color:var(--text3)}' +
+'.dk-unread .dk-main b{color:var(--text);font-weight:500}' +
+'.dk-unread .dk-ic{color:var(--cyan)}' +
+'.dk-go{color:var(--text3);font-size:11px;flex-shrink:0}' +
+'.dk-empty{font-size:12px;color:var(--text3);padding:12px 0}' +
+'.dk-rf{float:right;padding:3px 9px;font-size:11px;min-height:0}';
+  document.head.appendChild(css);
+
+  // The view element the dispatcher switches to.
+  if (!document.getElementById('view-desk')) {
+    const el = document.createElement('div');
+    el.id = 'view-desk';
+    el.className = 'view';
+    document.getElementById('views-root').appendChild(el);
+  }
+
+  // Register in the nav, under Today, next to the things you check daily.
+  if (typeof NAV !== 'undefined' && !NAV.some(n => n.id === 'desk')) {
+    NAV.push({ id: 'desk', icon: '🗓', label: 'Desk' });
+  }
+  if (typeof NAV_SECTIONS !== 'undefined') {
+    const today = NAV_SECTIONS.find(s => s.label === 'Today');
+    if (today && today.ids.indexOf('desk') < 0) today.ids.splice(1, 0, 'desk');
+  }
+  if (typeof renderSidebar === 'function') renderSidebar();
+
+  const prev = buildView;
+  buildView = function (id) {
+    const out = prev.apply(this, arguments);
+    if (id === 'desk') setTimeout(deskPaint, 30);
+    return out;
+  };
+})();
+</script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   INTEGRATIONS — one panel, honest state, and a way back out
+
+   Connecting was possible; disconnecting was not, and nothing told you what was
+   actually connected. Each service now shows its real state, read from the
+   server rather than from a token in the browser, with Connect / Reconnect /
+   Disconnect as appropriate.
+
+   Disconnect deletes the stored refresh token and the mirrored rows. It cannot
+   revoke Google's own grant — only your Google account can do that — so it says
+   so and links there rather than implying more than it did.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+const G_SERVICES = [
+  { id:'calendar', label:'Google Calendar', icon:'🗓', table:'calendar_events',
+    fn:'google-sync',  noun:'events' },
+  { id:'drive',    label:'Google Drive',    icon:'📁', table:'drive_files',
+    fn:'drive-sync',   noun:'files' },
+  { id:'mail',     label:'Gmail',           icon:'✉️', table:'mail_messages',
+    fn:'gmail-sync',   noun:'messages' },
+];
+const FN_BASE = 'https://hzpdbhufpceikcbqgpiv.functions.supabase.co/';
+
+async function integState() {
+  const out = { connected:false, connectedAt:null, lastError:null, counts:{} };
+  if (!sbClient || !authUserId) return out;
+  const { data: tok } = await sbClient.from('google_tokens')
+    .select('connected_at,last_error').maybeSingle();
+  // google_tokens is readable only by the service role by design, so a null
+  // here is expected and not evidence of being disconnected. Row counts are
+  // the honest signal from the browser's side.
+  if (tok) { out.connectedAt = tok.connected_at; out.lastError = tok.last_error; }
+  for (const s of G_SERVICES) {
+    const { count } = await sbClient.from(s.table)
+      .select('id', { count:'exact', head:true });
+    out.counts[s.id] = count ?? 0;
+  }
+  out.connected = Object.values(out.counts).some(n => n > 0);
+  return out;
+}
+
+async function integSync(fn, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Syncing…'; }
+  try {
+    const r = await fetch(FN_BASE + fn, { method:'POST',
+      headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer ' + SUPA_KEY, 'apikey':SUPA_KEY },
+      body:'{}' });
+    const d = await r.json().catch(() => ({}));
+    const res = (d.results || [])[0] || {};
+    if (res.error) alert('Sync reported: ' + res.error);
+  } catch (e) { alert('Sync failed: ' + e.message); }
+  if (btn) { btn.disabled = false; btn.textContent = 'Sync now'; }
+  integPaint();
+}
+
+/** Clear the local mirror for one service. Google's grant is untouched. */
+async function integClear(svcId) {
+  const s = G_SERVICES.find(x => x.id === svcId);
+  if (!s) return;
+  if (!confirm('Clear the mirrored ' + s.noun + ' for ' + s.label + '?\n\n' +
+               'This empties the local copy only. Your Google account is not ' +
+               'changed, and the next sync will bring it back.')) return;
+  const { error } = await sbClient.from(s.table).delete().eq('user_id', authUserId);
+  if (error) alert('Could not clear: ' + error.message);
+  integPaint();
+}
+
+/** Full disconnect: drop every mirror, then send you to revoke the grant. */
+async function integDisconnect() {
+  if (!confirm('Disconnect Google?\n\n' +
+      'Every mirrored calendar event, file and message is deleted, and the app ' +
+      'stops syncing. The stored refresh token can only be revoked from your ' +
+      'Google account — the next screen takes you there.')) return;
+  for (const s of G_SERVICES) {
+    await sbClient.from(s.table).delete().eq('user_id', authUserId);
+  }
+  integPaint();
+  if (confirm('Mirrors cleared.\n\nOpen Google account permissions now to revoke ' +
+              'the app’s access as well?')) {
+    window.open('https://myaccount.google.com/permissions', '_blank', 'noopener');
+  }
+}
+
+async function integPaint() {
+  const host = document.getElementById('integ-panel');
+  if (!host) return;
+  const st = await integState();
+  const apple = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent);
+
+  host.innerHTML =
+    '<div class="card"><div class="card-title">Google Workspace</div>' +
+      (st.lastError ? '<div style="font-size:11.5px;color:var(--red);margin-bottom:10px">' +
+        'Last sync error: ' + cnxEsc(st.lastError) + '</div>' : '') +
+      G_SERVICES.map(s => {
+        const n = st.counts[s.id] || 0;
+        const on = n > 0;
+        return '<div class="ig-row">' +
+          '<span class="ig-ic">' + s.icon + '</span>' +
+          '<span class="ig-main"><b>' + s.label + '</b>' +
+            '<small>' + (on ? n + ' ' + s.noun + ' mirrored' : 'nothing mirrored yet') + '</small></span>' +
+          '<span class="ig-state ' + (on ? 'ig-on' : 'ig-off') + '">' +
+            (on ? 'Connected' : 'Idle') + '</span>' +
+          '<span class="ig-acts">' +
+            '<button class="btn" onclick="integSync(\'' + s.fn + '\',this)">Sync now</button>' +
+            (on ? '<button class="btn" onclick="integClear(\'' + s.id + '\')">Clear</button>' : '') +
+          '</span></div>';
+      }).join('') +
+      '<div class="ig-foot">' +
+        '<button class="btn btn-gold" onclick="gConnect()">' +
+          (st.connected ? 'Reconnect' : 'Connect Google') + '</button>' +
+        (st.connected ? '<button class="btn ig-danger" onclick="integDisconnect()">Disconnect</button>' : '') +
+        '<span class="ig-note">Reconnect only if syncing has broken. Consent must ' +
+        'come from your Workspace account.</span>' +
+      '</div>' +
+    '</div>' +
+
+    /* ── Apple ── */
+    '<div class="card" style="margin-top:14px"><div class="card-title">Apple</div>' +
+      '<div class="ig-note" style="margin-bottom:12px">' +
+        'Apple has no web API for Notes or Calendar, so these open the apps ' +
+        'themselves rather than mirroring their contents.' +
+        (apple ? '' : ' These buttons only work on an iPhone, iPad or Mac.') +
+      '</div>' +
+      [['🗓 Apple Calendar','appleOpenCalendar()'],
+       ['📝 Apple Notes','appleOpenNotes()'],
+       ['✅ Reminders','appleOpenReminders()']].map(([l, fn]) =>
+        '<button class="btn" style="margin:0 7px 7px 0" onclick="' + fn + '">' + l + '</button>').join('') +
+      '<div class="ig-note" style="margin-top:10px">' +
+        'To get Apple Calendar events <em>into</em> this system, share that ' +
+        'calendar to your Google account — the calendar sync already reads every ' +
+        'calendar it can see.</div>' +
+    '</div>';
+}
+
+/* ── Apple app launchers ──────────────────────────────────────────────────
+   These are URL schemes handled by the OS, not web pages. calshow: takes
+   seconds since 2001-01-01, which is Apple's reference date, so passing a real
+   timestamp opens that day rather than just the app. */
+function appleOpenCalendar(when) {
+  const ref = Date.UTC(2001, 0, 1);
+  const secs = Math.floor(((when ? new Date(when).getTime() : Date.now()) - ref) / 1000);
+  appleLaunch('calshow:' + secs, 'Apple Calendar');
+}
+function appleOpenNotes()     { appleLaunch('mobilenotes://', 'Apple Notes'); }
+function appleOpenReminders() { appleLaunch('x-apple-reminderkit://', 'Reminders'); }
+
+/** Nothing reports failure for an unhandled scheme, so say so if we are
+ *  clearly not on an Apple device rather than appearing to do nothing. */
+function appleLaunch(url, label) {
+  if (!/iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent)) {
+    alert(label + ' can only be opened from an iPhone, iPad or Mac.');
+    return;
+  }
+  window.location.href = url;
+}
+
+(function integInstall() {
+  const css = document.createElement('style');
+  css.textContent =
+'.ig-row{display:flex;gap:11px;align-items:center;padding:11px 0;border-bottom:1px solid var(--rule);flex-wrap:wrap}' +
+'.ig-ic{font-size:17px;flex-shrink:0}' +
+'.ig-main{flex:1;min-width:150px}' +
+'.ig-main b{display:block;font-weight:400;font-size:13.5px;color:var(--text2)}' +
+'.ig-main small{font-family:var(--font-mono);font-size:9px;color:var(--text3)}' +
+'.ig-state{font-family:var(--font-mono);font-size:9px;letter-spacing:1px;text-transform:uppercase;' +
+ 'padding:3px 8px;border-radius:20px;flex-shrink:0}' +
+'.ig-on{background:rgba(61,170,114,.16);color:var(--green)}' +
+'.ig-off{background:var(--ink4);color:var(--text3)}' +
+'.ig-acts{display:flex;gap:6px;flex-shrink:0}' +
+'.ig-acts .btn{padding:5px 11px;font-size:11px;min-height:0}' +
+'.ig-foot{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding-top:14px}' +
+'.ig-danger{border-color:var(--red);color:var(--red)}' +
+'.ig-note{font-size:11.5px;color:var(--text3);line-height:1.6}';
+  document.head.appendChild(css);
+
+  const prev = buildView;
+  buildView = function (id) {
+    const out = prev.apply(this, arguments);
+    if (id === 'desk') {
+      setTimeout(() => {
+        const host = document.getElementById('view-desk');
+        if (host && !document.getElementById('integ-panel')) {
+          const d = document.createElement('div');
+          d.id = 'integ-panel';
+          d.style.marginTop = '14px';
+          host.appendChild(d);
+        }
+        integPaint();
+      }, 120);
+    }
+    return out;
+  };
+})();
+</script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   DESK, SECOND PASS — and a setup card that answers "where does the token go"
+
+   The first Desk was three plain lists. This adds the things that make it
+   usable rather than merely present: filters, search, a mail/file switch,
+   clickable events, hover states, and counts you can read at a glance.
+
+   The setup card exists because copying a 48-character token out of the
+   Supabase SQL editor on a phone is miserable, and because "where does this
+   go" is a fair question when the answer lives in a different app's UI. It
+   shows every value a Shortcut needs, each with its own copy button, in the
+   order the Shortcut asks for them.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+let _deskTab = 'mail';        // which of mail/files the right column shows
+let _deskQ = '';              // filter text
+let _deskUnreadOnly = false;
+
+async function deskCopy(text, btn, label) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (e) {
+    // Clipboard API needs a secure context and a user gesture; a hidden
+    // textarea works where it does not.
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch (e2) { /* nothing else to try */ }
+    ta.remove();
+  }
+  if (btn) {
+    const old = btn.textContent;
+    btn.textContent = '✓ Copied';
+    btn.classList.add('dk-copied');
+    setTimeout(() => { btn.textContent = old; btn.classList.remove('dk-copied'); }, 1600);
+  }
+}
+
+/* ── the ingest token, on demand ─────────────────────────────────────────── */
+let _tokenShown = false;
+async function deskToken(action, btn) {
+  if (!sbClient || !authUserId) { alert('Sign in first.'); return; }
+  const { data, error } = await sbClient.from('ingest_tokens')
+    .select('token').eq('revoked', false).limit(1).maybeSingle();
+  if (error || !data?.token) {
+    alert('No active ingest token found.\n\n' +
+          (error ? error.message : 'Create one in the Supabase SQL editor.'));
+    return;
+  }
+  if (action === 'copy') return deskCopy(data.token, btn);
+  _tokenShown = !_tokenShown;
+  const el = document.getElementById('dk-token-val');
+  if (el) {
+    el.textContent = _tokenShown ? data.token : '•'.repeat(48);
+    el.classList.toggle('dk-revealed', _tokenShown);
+  }
+  if (btn) btn.textContent = _tokenShown ? 'Hide' : 'Reveal';
+}
+
+function deskSetupCard() {
+  const base = 'https://hzpdbhufpceikcbqgpiv.functions.supabase.co';
+  const row = (label, value, hint) =>
+    '<div class="dk-set-row">' +
+      '<span class="dk-set-l">' + cnxEsc(label) + '</span>' +
+      '<code class="dk-set-v">' + cnxEsc(value) + '</code>' +
+      '<button class="btn dk-cp" onclick="deskCopy(' + JSON.stringify(value)
+        .replace(/"/g, '&quot;') + ',this)">Copy</button>' +
+      (hint ? '<span class="dk-set-h">' + cnxEsc(hint) + '</span>' : '') +
+    '</div>';
+
+  return '<div class="card dk-setup"><div class="card-title">Voice setup — Siri Shortcuts</div>' +
+    '<div class="dk-note">Each value below goes into one field of the Shortcut\'s ' +
+      '<b>Get Contents of URL</b> action. Build it in the Shortcuts app; these are ' +
+      'the values it asks for, in order.</div>' +
+
+    '<div class="dk-step"><span class="dk-step-n">1</span>' +
+      '<div><b>Your ingest token</b><div class="dk-note">This is how the Shortcut ' +
+      'proves it is you — a Shortcut cannot sign in, so it carries this instead. ' +
+      'Treat it like a password.</div>' +
+      '<div class="dk-token"><code id="dk-token-val">' + '•'.repeat(48) + '</code>' +
+        '<button class="btn dk-cp" onclick="deskToken(\'toggle\',this)">Reveal</button>' +
+        '<button class="btn btn-gold dk-cp" onclick="deskToken(\'copy\',this)">Copy</button>' +
+      '</div></div></div>' +
+
+    '<div class="dk-step"><span class="dk-step-n">2</span>' +
+      '<div><b>"Tell Rix" — capture by voice</b>' +
+      '<div class="dk-note">Shortcuts → + → <b>Dictate Text</b>, then <b>Get Contents of URL</b>:</div>' +
+      row('URL', base + '/notes-ingest') +
+      '<div class="dk-set-row"><span class="dk-set-l">Method</span>' +
+        '<code class="dk-set-v">POST</code></div>' +
+      '<div class="dk-set-row"><span class="dk-set-l">Header</span>' +
+        '<code class="dk-set-v">Content-Type: application/json</code></div>' +
+      '<div class="dk-set-row"><span class="dk-set-l">Body</span>' +
+        '<code class="dk-set-v">JSON → token = your token · text = Dictated Text</code></div>' +
+      '<div class="dk-note">Name it <b>Tell Rix</b>. Then: “Hey Siri, Tell Rix”.</div>' +
+      '</div></div>' +
+
+    '<div class="dk-step"><span class="dk-step-n">3</span>' +
+      '<div><b>"Ask Rix" — spoken answers</b>' +
+      '<div class="dk-note">Same shape, plus two steps to speak the reply:</div>' +
+      row('URL', base + '/rix-voice') +
+      '<div class="dk-set-row"><span class="dk-set-l">Body</span>' +
+        '<code class="dk-set-v">JSON → token = your token · question = Dictated Text</code></div>' +
+      '<div class="dk-set-row"><span class="dk-set-l">Then</span>' +
+        '<code class="dk-set-v">Get Dictionary Value → key: answer → Speak Text</code></div>' +
+      '<div class="dk-note">Name it <b>Ask Rix</b>. Ask it “what is pending” or ' +
+      '“what is on today”.</div>' +
+      '</div></div>' +
+
+    '<div class="dk-note" style="margin-top:12px">The Health shortcut uses a ' +
+      '<b>different</b> token, kept outside the database. See SHORTCUTS.md.</div>' +
+  '</div>';
+}
+
+/* ── richer lists ────────────────────────────────────────────────────────── */
+function deskFilter(v) { _deskQ = String(v || '').toLowerCase(); deskPaintLists(); }
+function deskSwitch(tab) { _deskTab = tab; _deskQ = ''; deskPaint(); }
+function deskToggleUnread(btn) {
+  _deskUnreadOnly = !_deskUnreadOnly;
+  if (btn) btn.classList.toggle('dk-chip-on', _deskUnreadOnly);
+  deskPaintLists();
+}
+
+let _deskFiles = [], _deskMail = [];
+
+function deskPaintLists() {
+  const host = document.getElementById('dk-list-body');
+  if (!host) return;
+  const q = _deskQ;
+
+  if (_deskTab === 'files') {
+    const rows = _deskFiles.filter(f => !q || String(f.name).toLowerCase().includes(q));
+    host.innerHTML = rows.length ? rows.map(f =>
+      '<a class="dk-row" href="' + cnxEsc(f.web_link || '#') + '" target="_blank" rel="noopener">' +
+      '<span class="dk-ic">' + driveIcon(f.mime_type) + '</span>' +
+      '<span class="dk-main"><b>' + cnxEsc(f.name) + '</b>' +
+      '<small>' + cnxEsc(relDay(f.modified_at)) +
+      (f.size_bytes ? ' · ' + driveSize(f.size_bytes) : '') +
+      (f.owner ? ' · ' + cnxEsc(f.owner) : '') + '</small></span>' +
+      '<span class="dk-go">↗</span></a>').join('')
+      : '<div class="dk-empty">' + (q ? 'No files matching “' + cnxEsc(q) + '”.'
+                                      : 'No files mirrored yet.') + '</div>';
+    return;
+  }
+
+  const rows = _deskMail
+    .filter(m => !_deskUnreadOnly || m.unread)
+    .filter(m => !q || (String(m.subject) + ' ' + String(m.from_name)).toLowerCase().includes(q));
+  host.innerHTML = rows.length ? rows.map(m =>
+    '<a class="dk-row' + (m.unread ? ' dk-unread' : '') + '" href="' + cnxEsc(m.web_link || '#') +
+    '" target="_blank" rel="noopener">' +
+    '<span class="dk-ic">' + (m.unread ? '●' : '○') + '</span>' +
+    '<span class="dk-main"><b>' + cnxEsc(m.subject || '(no subject)') + '</b>' +
+    '<small>' + cnxEsc(m.from_name || m.from_email || '') + ' · ' +
+    cnxEsc(relDay(m.received_at)) + '</small>' +
+    (m.snippet ? '<span class="dk-snip">' + cnxEsc(String(m.snippet).slice(0, 110)) + '</span>' : '') +
+    '</span><span class="dk-go">↗</span></a>').join('')
+    : '<div class="dk-empty">' + (_deskUnreadOnly ? 'Nothing unread.'
+        : q ? 'No mail matching “' + cnxEsc(q) + '”.' : 'No mail mirrored yet.') + '</div>';
+}
+
+/** Open a calendar event in Google Calendar on its own day. */
+function deskOpenDay(key) {
+  const d = key ? new Date(key + 'T12:00:00') : new Date();
+  const ymd = d.getFullYear() + '/' + (d.getMonth() + 1) + '/' + d.getDate();
+  window.open('https://calendar.google.com/calendar/r/day/' + ymd, '_blank', 'noopener');
+}
+</script>
+
+<script>
+(function deskPolish() {
+  const css = document.createElement('style');
+  css.textContent =
+'.dk-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}' +
+'@media(min-width:1500px){.dk-grid{grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr)}}' +
+'.dk-cal,.dk-agenda,.dk-stream{transition:border-color .2s}' +
+'.dk-sub{font-family:var(--font-mono);font-size:9.5px;letter-spacing:1.8px;' +
+ 'text-transform:uppercase;color:var(--text3)}' +
+'.dk-cell{transition:transform .12s,background .15s,border-color .15s}' +
+'.dk-cell:not(.dk-mute):hover{transform:translateY(-1px);background:var(--ink3)}' +
+'.dk-cal-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;' +
+ 'margin-top:13px;padding-top:11px;border-top:1px solid var(--rule);' +
+ 'font-family:var(--font-mono);font-size:9.5px;color:var(--text3)}' +
+'.dk-ev{cursor:pointer;border-radius:7px;padding:9px 8px;margin:0 -8px;transition:background .15s}' +
+'.dk-ev:hover{background:var(--ink4)}' +
+'.dk-tabs{display:flex;gap:5px}' +
+'.dk-tab{padding:6px 13px;border-radius:8px;font-size:12.5px;color:var(--text3);cursor:pointer;' +
+ 'border:1px solid transparent;display:flex;align-items:center;gap:6px;transition:all .15s}' +
+'.dk-tab:hover{color:var(--text2);background:var(--ink3)}' +
+'.dk-tab.on{background:var(--cyan-lo);border-color:var(--cyan);color:var(--cyan-hi)}' +
+'.dk-tab i{font-style:normal;font-family:var(--font-mono);font-size:9px;background:var(--ink);' +
+ 'padding:1px 6px;border-radius:20px;color:var(--gold)}' +
+'.dk-tools{display:flex;gap:7px;margin:11px 0 4px}' +
+'.dk-search{flex:1;padding:8px 11px;font-size:12.5px}' +
+'.dk-chip{padding:6px 12px;font-size:11px;min-height:0;white-space:nowrap}' +
+'.dk-chip-on{background:var(--cyan-lo);border-color:var(--cyan);color:var(--cyan-hi)}' +
+'.dk-row{border-radius:8px;padding:10px 8px;margin:0 -8px;border-bottom:1px solid var(--rule);' +
+ 'transition:background .15s}' +
+'.dk-row:hover{background:var(--ink4)}' +
+'.dk-snip{display:block;font-size:11px;color:var(--text3);line-height:1.5;margin-top:3px;' +
+ 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+'.dk-cp{padding:5px 11px;font-size:11px;min-height:0}' +
+'.dk-copied{background:rgba(61,170,114,.18);border-color:var(--green);color:var(--green)}' +
+/* setup card */
+'.dk-setup{grid-column:1/-1;margin-top:14px}' +
+'.dk-note{font-size:11.5px;color:var(--text3);line-height:1.65;margin:4px 0}' +
+'.dk-note b{color:var(--text2);font-weight:500}' +
+'.dk-step{display:flex;gap:12px;padding:14px 0;border-bottom:1px solid var(--rule)}' +
+'.dk-step:last-of-type{border-bottom:none}' +
+'.dk-step > div{flex:1;min-width:0}' +
+'.dk-step b{font-size:13.5px;color:var(--text2);font-weight:500}' +
+'.dk-step-n{width:23px;height:23px;border-radius:50%;background:var(--cyan-lo);' +
+ 'border:1px solid var(--cyan);color:var(--cyan-hi);font-family:var(--font-mono);font-size:11px;' +
+ 'display:flex;align-items:center;justify-content:center;flex-shrink:0}' +
+'.dk-token{display:flex;gap:7px;align-items:center;margin-top:8px;flex-wrap:wrap}' +
+'.dk-token code{flex:1;min-width:180px;font-family:var(--font-mono);font-size:11px;' +
+ 'background:var(--ink);padding:9px 11px;border-radius:7px;color:var(--text3);' +
+ 'overflow-x:auto;white-space:nowrap;border:1px solid var(--rule)}' +
+'.dk-token code.dk-revealed{color:var(--gold-hi);border-color:var(--gold)}' +
+'.dk-set-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:7px}' +
+'.dk-set-l{font-family:var(--font-mono);font-size:9px;letter-spacing:1px;text-transform:uppercase;' +
+ 'color:var(--text3);min-width:56px}' +
+'.dk-set-v{flex:1;min-width:170px;font-family:var(--font-mono);font-size:11px;background:var(--ink);' +
+ 'padding:7px 10px;border-radius:6px;color:var(--text2);overflow-x:auto;white-space:nowrap;' +
+ 'border:1px solid var(--rule)}';
+  document.head.appendChild(css);
 })();
 </script>
 
