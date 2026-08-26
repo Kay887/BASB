@@ -5,8 +5,8 @@ self.addEventListener('push', event => {
   const title = data.title || 'CNX Master OS';
   const options = {
     body: data.body || '',
-    icon: data.icon || '/icon-192.png',
-    badge: data.badge || '/icon-192.png',
+    icon: data.icon || 'icon-192.png',
+    badge: data.badge || 'icon-192.png',
     tag: data.tag || 'cnx-reminder',
     data: { url: data.url || '/' },
   };
