@@ -10,7 +10,13 @@ self.addEventListener('push', event => {
     tag: data.tag || 'cnx-reminder',
     data: { url: data.url || '/' },
   };
-  event.waitUntil(self.registration.showNotification(title, options));
+  // Tell any open page as well. The OS banner is easy to miss when you are
+  // already looking at the app, and the in-app inbox used to sit stale until
+  // its next two-minute poll.
+  const tellPages = self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+    .then(cs => cs.forEach(c => c.postMessage({ type: 'cnx-push', title, body: options.body })));
+
+  event.waitUntil(Promise.all([self.registration.showNotification(title, options), tellPages]));
 });
 
 self.addEventListener('notificationclick', event => {
