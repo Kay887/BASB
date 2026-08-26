@@ -12797,5 +12797,90 @@ setTimeout(function tick() {
 }, 12000);
 </script>
 
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   GOOGLE CONNECT BUTTONS
+
+   These buttons ran the original implicit flow (`response_type=token`) against
+   a client id hardcoded years ago — 773543586585-… — which is not the client
+   this project actually uses (42891059401-…). Pressing them produced a 403
+   from Google for a client that does not exist here, regardless of which
+   account you signed in with.
+
+   They now route to the server-side auth-code flow, the one already holding a
+   working refresh token. That flow stores the refresh token server-side, so a
+   connection made once survives indefinitely: nothing to reconnect weekly, and
+   nothing expires an hour after you close the tab the way implicit tokens did.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+const G_OAUTH_URL = 'https://hzpdbhufpceikcbqgpiv.functions.supabase.co/google-oauth';
+
+/** Is Google already connected server-side? */
+async function gStatus() {
+  if (!sbClient || !authUserId) return { connected: false, reason: 'not signed in' };
+  const { data, error } = await sbClient.from('calendar_events')
+    .select('id', { count: 'exact', head: false }).limit(1);
+  if (error) return { connected: false, reason: error.message };
+  return { connected: (data || []).length > 0, reason: '' };
+}
+
+/** Start the server-side flow, which identifies you by ingest token. */
+async function gConnect() {
+  if (!sbClient || !authUserId) { alert('Sign in first, then connect Google.'); return; }
+  const { data, error } = await sbClient.from('ingest_tokens')
+    .select('token').eq('revoked', false).limit(1).maybeSingle();
+  if (error || !data?.token) {
+    alert('No ingest token found for your account. Create one in the Supabase SQL editor:\n\n' +
+          "insert into ingest_tokens (token, user_id) values (encode(gen_random_bytes(24),'hex'), auth.uid());");
+    return;
+  }
+  // Consent must be given by the Workspace account this app is internal to.
+  window.location.href = G_OAUTH_URL + '?start=1&token=' + encodeURIComponent(data.token);
+}
+
+connectGoogleCalendar = gConnect;
+connectGoogleDrive    = gConnect;
+if (typeof connectGoogleGmail === 'function') connectGoogleGmail = gConnect;
+
+/* Analytics and Search Console ask for scopes the server-side flow does not
+   request, so they cannot ride along. Say so plainly instead of sending you to
+   a 403. */
+function gNotWired(name) {
+  alert(name + ' is not wired into the server-side Google connection.\n\n' +
+        'The old in-app flow used a client id that no longer exists in this ' +
+        'project, which is what produced the 403. Adding ' + name + ' means ' +
+        'requesting its scope in the google-oauth function and reconnecting once.');
+}
+connectGoogleAnalytics = () => gNotWired('Google Analytics');
+if (typeof connectGoogleSearchConsole === 'function')
+  connectGoogleSearchConsole = () => gNotWired('Search Console');
+
+/* Reflect reality on the buttons themselves. */
+(function gPaintButtons() {
+  async function paint() {
+    const s = await gStatus();
+    [['gcal-connect-btn', 'Calendar'], ['gdrive-connect-btn', 'Drive']].forEach(([id, label]) => {
+      const b = document.getElementById(id);
+      if (!b) return;
+      if (s.connected) {
+        b.textContent = '✓ Connected';
+        b.classList.remove('btn-gold');
+        b.title = label + ' is connected server-side and syncs every 15 minutes.';
+        b.onclick = () => alert(label + ' is already connected.\n\n' +
+          'It syncs every 15 minutes on the server, so it keeps working with the ' +
+          'app closed. You only need to reconnect if you revoke access in your ' +
+          'Google account.');
+      } else {
+        b.textContent = 'Connect';
+        b.onclick = gConnect;
+      }
+    });
+  }
+  const prev = buildView;
+  buildView = function () { const o = prev.apply(this, arguments); setTimeout(paint, 60); return o; };
+  setTimeout(paint, 1500);
+})();
+</script>
+
 </body>
 </html>
