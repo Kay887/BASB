@@ -13882,7 +13882,9 @@ function medMediaSession(title) {
     if (!_medBgEl) {
       _medBgEl = new Audio();
       _medBgEl.loop = true;
+      _medBgEl.preload = 'none';                  // 4-13 MB a track
       _medBgEl.setAttribute('playsinline', '');
+      _medBgEl.crossOrigin = 'anonymous';
     }
     _medBgEl.src = url;
     _medBgEl.loop = true;
@@ -14004,6 +14006,135 @@ function medMediaSession(title) {
 '.dk-gicon{width:18px;height:18px;object-fit:contain;display:block;opacity:.92}' +
 '.dk-row .dk-ic{width:38px;display:flex;align-items:center;justify-content:center}';
   document.head.appendChild(css);
+})();
+</script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   ADDED TRACKS, AND A GROUPED PICKER
+
+   Seven recordings were added to sounds/ but nothing referenced them, so they
+   sat in the repository doing nothing. With them the list reaches twenty, which
+   is past the point where a single flat row of chips is scannable — so the
+   picker is grouped by what the sound actually is.
+
+   These files are 4-13 MB each. preload is set to none so opening the tab does
+   not pull sixty megabytes over mobile data; a track downloads when you choose
+   it, and browsers stream it rather than waiting for the whole file.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+const MED_ADDED = [
+  { id:'buddhist',  label:'Buddhist Meditation', group:'Chants',
+    file:'sounds/atlasaudio-buddhist-meditation-588150.mp3' },
+  { id:'zenmed',    label:'Zen Meditation',      group:'Chants',
+    file:'sounds/velvetkeys-velvetkeys-zen-meditation-buddhist-407542.mp3' },
+  { id:'peaks',     label:'Whispers of the Peaks', group:'Chants',
+    file:'sounds/inhalinginfinity-whispers-of-the-peaks-buddhist-healing-music-calming-soothing-321674.mp3' },
+  { id:'silentw',   label:'Silent Waves',        group:'Instrumental',
+    file:'sounds/i_fisher-silent-waves-instrumental-333295.mp3' },
+  { id:'stillness', label:'The Stillness Within', group:'Instrumental',
+    file:'sounds/joyvideo123-the-stillness-within-568298.mp3' },
+  { id:'thunder',   label:'Rain & Thunder',      group:'Nature',
+    file:'sounds/loswin23-rain-and-thunder-585637.mp3' },
+  { id:'pebbles',   label:'Pebble Shore',        group:'Nature',
+    file:'sounds/somaa26-ocean-waves_-pebbles-coast-568723.mp3' },
+];
+
+// Which group each pre-existing track belongs to.
+const MED_GROUPS = {
+  none:'', om:'Chants', mani:'Chants',
+  tanpura:'Instrumental', thanpura:'Instrumental',
+  ocean:'Nature', oceanz:'Nature', rain:'Nature',
+  'drone-om':'Generated', 'drone-bowl':'Generated', shruti:'Generated',
+  breath:'Generated', wind:'Generated',
+};
+const MED_GROUP_ORDER = ['Chants', 'Instrumental', 'Nature', 'Generated'];
+
+(function medTracks() {
+  MED_ADDED.forEach(t => {
+    if (!MED_BG.some(b => b.id === t.id)) MED_BG.push({ id:t.id, label:t.label, file:t.file });
+    MED_GROUPS[t.id] = t.group;
+  });
+  MED_SYNTH.forEach(p => { if (!MED_GROUPS[p.id]) MED_GROUPS[p.id] = 'Generated'; });
+
+  /** Rebuild the picker as labelled groups instead of one twenty-chip row. */
+  function paintGroups() {
+    const row = document.getElementById('med-bg-row');
+    if (!row) return;
+    const host = row.parentNode;
+    let wrap = document.getElementById('med-bg-groups');
+    if (!wrap) {
+      wrap = document.createElement('div');
+      wrap.id = 'med-bg-groups';
+      host.insertBefore(wrap, row);
+      row.style.display = 'none';        // keep it: other code queries [data-bg]
+    }
+    const chip = t =>
+      '<button class="tnd-med-chant-btn mg-chip' + (t.id === _medBgId ? ' playing' : '') +
+      '" data-bgg="' + t.id + '" onclick="medBg(\'' + t.id + '\')">' + cnxEsc(t.label) + '</button>';
+
+    let html = '<div class="mg-sec"><div class="mg-chips">' +
+      chip(MED_BG.find(t => t.id === 'none') || { id:'none', label:'Silence' }) + '</div></div>';
+    MED_GROUP_ORDER.forEach(g => {
+      const items = MED_BG.filter(t => MED_GROUPS[t.id] === g);
+      if (!items.length) return;
+      html += '<div class="mg-sec"><div class="mg-h">' + g +
+        (g === 'Generated' ? ' <em>· made on device</em>' : '') + '</div>' +
+        '<div class="mg-chips">' + items.map(chip).join('') + '</div></div>';
+    });
+    wrap.innerHTML = html;
+  }
+  window.medPaintGroups = paintGroups;
+
+  // Keep the grouped chips in step with whatever sets the current track.
+  const prevBg = medBg;
+  medBg = async function (id) {
+    const out = await prevBg.apply(this, arguments);
+    document.querySelectorAll('#med-bg-groups [data-bgg]').forEach(b =>
+      b.classList.toggle('playing', b.dataset.bgg === id));
+
+    // Lock-screen contract, applied to every track rather than only the
+    // generated ones. An <audio> element keeps playing while the screen is
+    // locked; an AudioContext does not, which is why nothing here uses one for
+    // playback. loop must be re-asserted because assigning src can clear it,
+    // and MediaSession is what puts the title and pause button on the lock
+    // screen instead of leaving it blank.
+    const t = MED_BG.find(x => x.id === id);
+    if (_medBgEl && t && (t.file || t.synth)) {
+      _medBgEl.loop = true;
+      // The original medBg creates the element for file-backed tracks and
+      // leaves preload at auto, so this is asserted here rather than only in
+      // the generated branch. Once a track is chosen the browser streams it;
+      // what this prevents is fetching megabytes nobody asked to hear.
+      if (_medBgEl.preload !== 'none') _medBgEl.preload = 'none';
+      _medBgEl.setAttribute('playsinline', '');
+      try { medMediaSession(t.label); } catch (e) { /* older Safari */ }
+    } else if ('mediaSession' in navigator) {
+      try { navigator.mediaSession.playbackState = 'none'; } catch (e) {}
+    }
+    return out;
+  };
+
+  // 4-13 MB a track: do not fetch until one is actually chosen.
+  const armPreload = () => { if (_medBgEl) _medBgEl.preload = 'none'; };
+
+  const css = document.createElement('style');
+  css.textContent =
+'#med-bg-groups{margin:2px 0 4px}' +
+'.mg-sec{margin-bottom:11px}' +
+'.mg-h{font-family:var(--font-mono);font-size:8.5px;letter-spacing:1.6px;text-transform:uppercase;' +
+ 'color:var(--text3);margin-bottom:6px;opacity:.8}' +
+'.mg-h em{font-style:normal;opacity:.7}' +
+'.mg-chips{display:flex;gap:6px;flex-wrap:wrap}' +
+'.mg-chip{font-size:12px}';
+  document.head.appendChild(css);
+
+  const prev = buildView;
+  buildView = function (id) {
+    const out = prev.apply(this, arguments);
+    if (id === 'tending') setTimeout(() => { paintGroups(); armPreload(); }, 90);
+    return out;
+  };
 })();
 </script>
 
