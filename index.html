@@ -13568,7 +13568,7 @@ function deskPaintLists() {
     const rows = _deskFiles.filter(f => !q || String(f.name).toLowerCase().includes(q));
     host.innerHTML = rows.length ? rows.map(f =>
       '<a class="dk-row" href="' + cnxEsc(f.web_link || '#') + '" target="_blank" rel="noopener">' +
-      '<span class="dk-ic">' + driveIcon(f.mime_type) + '</span>' +
+      '<span class="dk-ic">' + driveIcon(f) + '</span>' +
       '<span class="dk-main"><b>' + cnxEsc(f.name) + '</b>' +
       '<small>' + cnxEsc(relDay(f.modified_at)) +
       (f.size_bytes ? ' · ' + driveSize(f.size_bytes) : '') +
@@ -13659,6 +13659,345 @@ function deskOpenDay(key) {
 '.dk-set-v{flex:1;min-width:170px;font-family:var(--font-mono);font-size:11px;background:var(--ink);' +
  'padding:7px 10px;border-radius:6px;color:var(--text2);overflow-x:auto;white-space:nowrap;' +
  'border:1px solid var(--rule)}';
+  document.head.appendChild(css);
+})();
+</script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   MEDITATION — a real gong, synthesised drones, and lock-screen behaviour
+
+   The single 396 Hz bowl was a placeholder: six sine partials, seven seconds,
+   no strike. Real bells and gongs have a transient at the moment of impact,
+   partials that drift slightly out of tune with each other and beat against
+   one another, and a decay measured in tens of seconds. This adds four voices
+   built that way.
+
+   Chants and ambient beds are also synthesised here rather than downloaded, so
+   they cost nothing to ship and work offline. Every partial is quantised to an
+   exact multiple of 1/duration, which makes each loop mathematically seamless:
+   the waveform at the end of the buffer is the waveform at the start, so there
+   is no click and no audible seam however long you sit.
+
+   On the lock screen: an AudioContext is suspended by iOS the moment the
+   screen locks, which is why nothing here plays live. Everything is rendered
+   offline to WAV, handed to an HTMLAudioElement, and those keep playing.
+   MediaSession then puts the title and controls on the lock screen itself.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── WAV helpers reuse the existing encoder ──────────────────────────────── */
+const MED_SR = 44100;
+
+/** Quantise to an exact multiple of 1/duration so the buffer loops seamlessly. */
+const medLoopHz = (hz, dur) => Math.max(1, Math.round(hz * dur)) / dur;
+
+/* ── Gong and bell voices ────────────────────────────────────────────────── */
+const MED_VOICES = [
+  { id:'bowl',   label:'Tibetan Bowl',  f:392, dur:11,
+    ratios:[1, 2.71, 5.15, 8.05, 11.4, 15.2], gains:[.34,.20,.13,.08,.05,.03], strike:.14 },
+  { id:'temple', label:'Temple Gong',   f:146, dur:16,
+    ratios:[1, 1.52, 2.03, 2.67, 3.55, 4.71, 6.2], gains:[.30,.22,.17,.12,.09,.06,.04], strike:.42 },
+  { id:'zen',    label:'Zen Bell',      f:523, dur:9,
+    ratios:[1, 2.0, 3.01, 4.18, 5.43, 6.8], gains:[.32,.18,.12,.07,.05,.03], strike:.20 },
+  { id:'burma',  label:'Burmese Bell',  f:294, dur:13,
+    ratios:[1, 2.32, 3.42, 4.61, 6.05, 7.8], gains:[.33,.21,.15,.10,.06,.04], strike:.26 },
+];
+let _medVoice = 'bowl';
+const _medBellUrls = {};
+
+async function medBuildVoice(id) {
+  if (_medBellUrls[id]) return _medBellUrls[id];
+  const v = MED_VOICES.find(x => x.id === id) || MED_VOICES[0];
+  const N = Math.floor(MED_SR * v.dur);
+  const oac = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, N, MED_SR);
+  const master = oac.createGain(); master.gain.value = 0.92; master.connect(oac.destination);
+
+  v.ratios.forEach((r, i) => {
+    // Two oscillators a few cents apart per partial. The slow beating between
+    // them is most of what separates a struck bell from an organ note.
+    [-1, 1].forEach((side) => {
+      const o = oac.createOscillator();
+      o.type = 'sine';
+      o.frequency.value = v.f * r * (1 + side * 0.0016 * (i + 1));
+      const g = oac.createGain();
+      // Higher partials die first, exactly as they do in metal.
+      const dec = Math.max(0.6, v.dur * Math.pow(0.62, i));
+      g.gain.setValueAtTime(0, 0);
+      g.gain.linearRampToValueAtTime(v.gains[i] * 0.5, 0.006 + i * 0.003);
+      g.gain.exponentialRampToValueAtTime(0.00008, dec);
+      o.connect(g); g.connect(master);
+      o.start(0); o.stop(v.dur);
+    });
+  });
+
+  // The strike itself: a short filtered noise burst. Without it the sound
+  // fades in like a synth pad instead of arriving like a struck object.
+  const nb = oac.createBuffer(1, Math.floor(MED_SR * 0.09), MED_SR);
+  const nd = nb.getChannelData(0);
+  for (let i = 0; i < nd.length; i++) nd[i] = (Math.random() * 2 - 1) * (1 - i / nd.length);
+  const ns = oac.createBufferSource(); ns.buffer = nb;
+  const nf = oac.createBiquadFilter(); nf.type = 'bandpass';
+  nf.frequency.value = v.f * 3.2; nf.Q.value = 1.1;
+  const ng = oac.createGain(); ng.gain.value = v.strike;
+  ns.connect(nf); nf.connect(ng); ng.connect(master); ns.start(0);
+
+  const rendered = await oac.startRendering();
+  _medBellUrls[id] = URL.createObjectURL(medEncodeWav(rendered));
+  return _medBellUrls[id];
+}
+
+// Replace the old single-voice builder so every existing caller benefits.
+medBuildBell = () => medBuildVoice(_medVoice);
+
+async function medVoiceSet(id) {
+  _medVoice = id;
+  sd('tending.med.voice', id);
+  _medBellEl = null;                       // rebind to the new rendered file
+  document.querySelectorAll('#med-voice-row [data-voice]').forEach(b =>
+    b.classList.toggle('on', b.dataset.voice === id));
+  await medStrike(0.85);                   // hear the choice immediately
+}
+
+/* ── Synthesised ambient beds ────────────────────────────────────────────── */
+const MED_SYNTH = [
+  { id:'drone-om',   label:'Om Drone',      f:108, kind:'drone',
+    partials:[1, 2, 3, 4, 5.02, 6], gains:[.30,.16,.10,.06,.04,.03] },
+  { id:'drone-bowl', label:'Bowl Drone',    f:136.1, kind:'drone',
+    partials:[1, 2.71, 5.15, 8.05], gains:[.26,.13,.07,.04] },
+  { id:'shruti',     label:'Shruti Box',    f:146.83, kind:'drone',
+    partials:[1, 1.5, 2, 3, 4, 6], gains:[.24,.18,.13,.08,.05,.03] },
+  { id:'breath',     label:'Deep Breath',   kind:'noise', lp:520, rate:1 / 9.5 },
+  { id:'wind',       label:'Night Wind',    kind:'noise', lp:900, rate:1 / 17 },
+];
+const _medSynthUrls = {};
+const MED_LOOP_SECS = 20;
+
+async function medBuildSynth(id) {
+  if (_medSynthUrls[id]) return _medSynthUrls[id];
+  const p = MED_SYNTH.find(x => x.id === id);
+  if (!p) return null;
+  const D = MED_LOOP_SECS, N = Math.floor(MED_SR * D);
+  const oac = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, N, MED_SR);
+  const master = oac.createGain(); master.gain.value = 0.5; master.connect(oac.destination);
+
+  if (p.kind === 'drone') {
+    p.partials.forEach((r, i) => {
+      const o = oac.createOscillator(); o.type = 'sine';
+      o.frequency.value = medLoopHz(p.f * r, D);       // exact loop
+      const g = oac.createGain(); g.gain.value = p.gains[i];
+      // A slow tremolo, also loop-quantised, so the drone breathes.
+      const lfo = oac.createOscillator(); lfo.type = 'sine';
+      lfo.frequency.value = medLoopHz(0.07 + i * 0.019, D);
+      const lg = oac.createGain(); lg.gain.value = p.gains[i] * 0.34;
+      lfo.connect(lg); lg.connect(g.gain); lfo.start(0); lfo.stop(D);
+      o.connect(g); g.connect(master); o.start(0); o.stop(D);
+    });
+  } else {
+    // Looped noise: the buffer is the loop, so it is seamless by construction.
+    const nb = oac.createBuffer(1, N, MED_SR);
+    const nd = nb.getChannelData(0);
+    let last = 0;
+    for (let i = 0; i < N; i++) {
+      const w = Math.random() * 2 - 1;
+      last = last * 0.986 + w * 0.014;                 // brown-ish, gentler than white
+      nd[i] = last * 5.2;
+    }
+    // Match the first and last few milliseconds so the wrap point is silent.
+    const bl = Math.floor(MED_SR * 0.05);
+    for (let i = 0; i < bl; i++) {
+      const t = i / bl;
+      nd[i] = nd[i] * t + nd[N - bl + i] * (1 - t);
+    }
+    const src = oac.createBufferSource(); src.buffer = nb; src.loop = false;
+    const lp = oac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = p.lp;
+    const g = oac.createGain();
+    // Tidal swell at breathing pace.
+    const cycles = Math.max(1, Math.round(p.rate * D));
+    for (let s = 0; s <= cycles; s++) {
+      const t0 = (s / cycles) * D;
+      g.gain.setValueAtTime(0.18, t0);
+      g.gain.linearRampToValueAtTime(0.62, t0 + D / cycles * 0.42);
+      g.gain.linearRampToValueAtTime(0.18, t0 + D / cycles);
+    }
+    src.connect(lp); lp.connect(g); g.connect(master); src.start(0);
+  }
+
+  const rendered = await oac.startRendering();
+  _medSynthUrls[id] = URL.createObjectURL(medEncodeWav(rendered));
+  return _medSynthUrls[id];
+}
+
+/* ── Lock-screen presence ────────────────────────────────────────────────── */
+function medMediaSession(title) {
+  if (!('mediaSession' in navigator)) return;
+  try {
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: title || 'Meditation',
+      artist: 'CNX Master OS',
+      album: 'Tending',
+    });
+    navigator.mediaSession.playbackState = 'playing';
+    navigator.mediaSession.setActionHandler('pause', () => {
+      if (_medBgEl) _medBgEl.pause();
+      navigator.mediaSession.playbackState = 'paused';
+    });
+    navigator.mediaSession.setActionHandler('play', () => {
+      if (_medBgEl) _medBgEl.play().catch(() => {});
+      navigator.mediaSession.playbackState = 'playing';
+    });
+    // Seeking a meditation makes no sense; refuse rather than behave oddly.
+    ['seekbackward', 'seekforward', 'previoustrack', 'nexttrack']
+      .forEach(a => { try { navigator.mediaSession.setActionHandler(a, null); } catch (e) {} });
+  } catch (e) { /* older Safari */ }
+}
+</script>
+
+<script>
+(function medWire() {
+  /* ── extend the background list with the synthesised beds ─────────────── */
+  MED_SYNTH.forEach(p => {
+    if (!MED_BG.some(b => b.id === p.id)) MED_BG.push({ id:p.id, label:p.label, synth:true });
+  });
+
+  // medBg() only understood file-backed tracks; teach it the synthesised ones.
+  const prevBg = medBg;
+  medBg = async function (id) {
+    const track = MED_BG.find(t => t.id === id);
+    if (!track || !track.synth) {
+      const out = prevBg.apply(this, arguments);
+      if (track && track.file) medMediaSession(track.label);
+      return out;
+    }
+    _medBgId = id;
+    sd('tending.med.bg', id);
+    document.querySelectorAll('#med-bg-row [data-bg]').forEach(b =>
+      b.classList.toggle('on', b.dataset.bg === id));
+    const url = await medBuildSynth(id);
+    if (!url) return;
+    if (!_medBgEl) {
+      _medBgEl = new Audio();
+      _medBgEl.loop = true;
+      _medBgEl.setAttribute('playsinline', '');
+    }
+    _medBgEl.src = url;
+    _medBgEl.loop = true;
+    _medBgEl.volume = gd('tending.med.vol', 0.55);
+    try { await _medBgEl.play(); } catch (e) { /* needs a gesture; the Start button is one */ }
+    medMediaSession(track.label);
+  };
+
+  /* ── a row of bell voices under the background row ────────────────────── */
+  /* The background row is built once at load, before these beds are appended
+     to MED_BG, so it would otherwise show only the eight file-backed tracks.
+     Append whatever is missing rather than rebuilding, which would discard the
+     row's existing state. */
+  function syncBgRow() {
+    const bgRow = document.getElementById('med-bg-row');
+    if (!bgRow) return;
+    MED_BG.forEach(t => {
+      if (bgRow.querySelector('[data-bg="' + t.id + '"]')) return;
+      const b = document.createElement('button');
+      b.className = 'tnd-med-chant-btn' + (t.id === _medBgId ? ' playing' : '');
+      b.dataset.bg = t.id;
+      b.textContent = t.label;
+      b.onclick = () => medBg(t.id);
+      // Synthesised beds are generated on the device: no download, works offline.
+      if (t.synth) b.title = 'Generated on your device — no file, works offline';
+      bgRow.appendChild(b);
+    });
+  }
+
+  function mountVoices() {
+    const bgRow = document.getElementById('med-bg-row');
+    if (!bgRow) return;
+    syncBgRow();
+    if (document.getElementById('med-voice-row')) return;
+    _medVoice = gd('tending.med.voice', 'bowl');
+    const wrap = document.createElement('div');
+    wrap.innerHTML =
+      '<div class="med-lbl">Bell — struck at the halfway point and at the end</div>' +
+      '<div id="med-voice-row" class="med-row">' +
+        MED_VOICES.map(v => '<button class="btn med-chip' + (v.id === _medVoice ? ' on' : '') +
+          '" data-voice="' + v.id + '" onclick="medVoiceSet(\'' + v.id + '\')">' +
+          v.label + '</button>').join('') +
+        '<button class="btn med-chip" onclick="medStrike(0.85)" title="Hear it">▶ Test</button>' +
+      '</div>';
+    bgRow.parentNode.insertBefore(wrap, bgRow.nextSibling);
+  }
+
+  const css = document.createElement('style');
+  css.textContent =
+'.med-lbl{font-family:var(--font-mono);font-size:9px;letter-spacing:1.5px;text-transform:uppercase;' +
+ 'color:var(--text3);margin:14px 0 7px}' +
+'.med-row{display:flex;gap:6px;flex-wrap:wrap}' +
+'.med-chip{padding:7px 13px;font-size:12px;min-height:0}' +
+'.med-chip.on{background:var(--cyan-lo);border-color:var(--cyan);color:var(--cyan-hi)}';
+  document.head.appendChild(css);
+
+  const prev = buildView;
+  buildView = function (id) {
+    const out = prev.apply(this, arguments);
+    if (id === 'tending') setTimeout(mountVoices, 60);
+    return out;
+  };
+
+  /* ── keep the lock screen honest when a session ends ──────────────────── */
+  if ('mediaSession' in navigator) {
+    const prevStrike = medStrike;
+    medStrike = async function () {
+      const r = await prevStrike.apply(this, arguments);
+      try { navigator.mediaSession.playbackState =
+        (_medBgEl && !_medBgEl.paused) ? 'playing' : 'paused'; } catch (e) {}
+      return r;
+    };
+  }
+})();
+
+/* ── Drive rows get real Google icons and thumbnails ─────────────────────── */
+(function driveThumbs() {
+  const prevRecent = gDriveRecent;
+  gDriveRecent = async function (n) {
+    if (!sbClient || !authUserId) return [];
+    const { data, error } = await sbClient.from('drive_files')
+      .select('name,mime_type,web_link,icon_link,thumbnail_link,modified_at,size_bytes,owner')
+      .order('modified_at', { ascending: false }).limit(n || 15);
+    if (error) { console.warn('drive pane:', error.message); return prevRecent.apply(this, arguments); }
+    return data || [];
+  };
+
+  // Google's own icon art beats an emoji guess at the file type, and the
+  // thumbnail links it returns are publicly fetchable, so previewable files
+  // can show themselves rather than a generic page glyph.
+  driveIcon = function (mimeOrFile) {
+    if (mimeOrFile && typeof mimeOrFile === 'object') {
+      const f = mimeOrFile;
+      if (f.thumbnail_link) {
+        return '<img class="dk-thumb" src="' + cnxEsc(f.thumbnail_link) + '" alt="" loading="lazy" ' +
+               'onerror="this.replaceWith(document.createTextNode(\'📄\'))">';
+      }
+      if (f.icon_link) {
+        return '<img class="dk-gicon" src="' + cnxEsc(f.icon_link) + '" alt="" loading="lazy" ' +
+               'onerror="this.replaceWith(document.createTextNode(\'📄\'))">';
+      }
+      mimeOrFile = f.mime_type;
+    }
+    const m = String(mimeOrFile || '');
+    if (m.indexOf('folder') >= 0) return '📁';
+    if (m.indexOf('spreadsheet') >= 0) return '📊';
+    if (m.indexOf('presentation') >= 0) return '📽';
+    if (m.indexOf('document') >= 0) return '📝';
+    if (m.indexOf('pdf') >= 0) return '📕';
+    if (m.indexOf('image/') === 0) return '🖼';
+    if (m.indexOf('video/') === 0) return '🎬';
+    return '📄';
+  };
+
+  const css = document.createElement('style');
+  css.textContent =
+'.dk-thumb{width:38px;height:38px;object-fit:cover;border-radius:6px;border:1px solid var(--rule);' +
+ 'display:block;background:var(--ink)}' +
+'.dk-gicon{width:18px;height:18px;object-fit:contain;display:block;opacity:.92}' +
+'.dk-row .dk-ic{width:38px;display:flex;align-items:center;justify-content:center}';
   document.head.appendChild(css);
 })();
 </script>
