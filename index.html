@@ -2558,6 +2558,7 @@ function setReminderStatus(i, status) {
   const item = items[i];
   item.status = status;
   item.done = (status === 'completed'); // keep the legacy boolean in sync so old code paths (rail, REN aggregation) still work correctly
+  item.doneAt = item.done ? Date.now() : null;
   sd('checklist.items', items);
   buildReminderKanban();
   buildOverview();
@@ -2701,6 +2702,7 @@ function toggleChecklistItem(i) {
     }
   } else {
     items[i].done = !items[i].done;
+    items[i].doneAt = items[i].done ? Date.now() : null;
     items[i].status = items[i].done ? 'completed' : 'due';
   }
   sd('checklist.items', items);
@@ -3190,7 +3192,7 @@ async function buildNeurix() {
     const att = c.attachment;
     const attHtml = att ? (
       att.type && att.type.startsWith('image/')
-        ? `<div style="margin-top:6px"><img src="${att.dataUrl}" style="max-width:160px;max-height:120px;border-radius:6px;border:1px solid var(--rule)"></div>`
+        ? `<div style="margin-top:6px">${attImgTag(att, 'max-width:160px;max-height:120px;border-radius:6px;border:1px solid var(--rule)')}</div>`
         : `<div style="margin-top:6px;display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text2)"><span>📄</span>${att.name} <span style="color:var(--text3)">(${(att.size/1024).toFixed(0)}KB)</span></div>`
     ) : '';
     return `<div class="rail-note-item" style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
@@ -3276,6 +3278,9 @@ function addNeurixTodo() {
 function toggleNeurixTodo(i) {
   const todos = gd('neurix.todos', []);
   todos[i].done = !todos[i].done;
+  // Stamp when it finished. Without this a closing brief cannot honestly say
+  // what was completed *today* — only what is done at some unknown point.
+  todos[i].doneAt = todos[i].done ? Date.now() : null;
   sd('neurix.todos', todos);
   buildNeurix();
 }
@@ -3557,6 +3562,7 @@ function addAcademyReminder() {
 function toggleAcademyReminder(i) {
   const rems = gd('academy.reminders', []);
   rems[i].done = !rems[i].done;
+  rems[i].doneAt = rems[i].done ? Date.now() : null;
   sd('academy.reminders', rems);
   buildAcademyChecklist();
 }
@@ -8361,11 +8367,7 @@ function evtExportAll() {
   };
 
   // Extend the dispatcher rather than editing it, so the original stays intact.
-  const _origBuildView = buildView;
-  buildView = function (id) {
-    if (id === 'everything') return buildEverything();
-    return _origBuildView.apply(this, arguments);
-  };
+  /* folded: routing now lives in the flat dispatcher */
 
   // renderSidebar() rebuilds #sidebar wholesale, which wipes the injected
   // search and capture rows — so they are re-added here after the rebuild.
@@ -8908,13 +8910,7 @@ async function digestRun(dateKey) {
     evtView.insertBefore(c, evtView.children[1] || null);
   }
 
-  const _prevBuildView = buildView;
-  buildView = function (id) {
-    if (id === 'notes') return buildNotes();
-    const out = _prevBuildView.apply(this, arguments);
-    if (id === 'everything') digestRender();
-    return out;
-  };
+  /* folded: routing now lives in the flat dispatcher */
 
   NAV.splice(1, 0, { id:'notes', icon:'📝', label:'Notes' });
   renderSidebar();
@@ -9180,7 +9176,8 @@ function mdItems() {
     out.push({ kind:'capture', id:'c' + i, idx:i,
       title:(c.text || '(attachment)').split('\n')[0].slice(0, 70),
       text:c.text || '', html:'', cat:c.cat || '', tags:c.tags || [], pinned:false, t:c.t,
-      thumb:(a && a.type && a.type.indexOf('image/') === 0) ? a.dataUrl : null,
+      thumb:(a && a.type && a.type.indexOf('image/') === 0) ? (a.dataUrl || null) : null,
+      thumbPath:(a && a.type && a.type.indexOf('image/') === 0 && !a.dataUrl) ? a.path : null,
       att:a || null });
   });
   return out.sort((a, b) => (b.pinned - a.pinned) || (b.t - a.t));
@@ -9247,7 +9244,8 @@ function buildMemoryDump() {
   document.getElementById('md-list').innerHTML = list.length ? list.map(i =>
     '<div class="md-row' + (_mdSel === i.kind + ':' + i.id ? ' sel' : '') +
       '" onclick="mdSelect(\'' + i.kind + '\',\'' + i.id + '\')">' +
-      (i.thumb ? '<img class="md-thumb" src="' + i.thumb + '" alt="">' :
+      (i.thumb || i.thumbPath ? (i.thumb ? '<img class="md-thumb" src="' + i.thumb + '" alt="">'
+          : '<img class="md-thumb" data-att-path="' + cnxEsc(i.thumbPath) + '" alt="">') :
         '<div class="md-thumb md-thumb-ph">' + (i.kind === 'note' ? '📝' : (i.att ? '📄' : '✦')) + '</div>') +
       '<div style="flex:1;min-width:0">' +
         '<div class="md-row-t">' + (i.pinned ? '📌 ' : '') + cnxEsc(i.title) + '</div>' +
@@ -9281,9 +9279,11 @@ function buildMemoryDump() {
       '<span style="font-family:var(--font-mono);font-size:9px;color:var(--text3)">' +
         new Date(item.t).toLocaleString() + '</span></div>' +
       '<div style="padding:16px 18px">' +
+      (item.thumbPath && !item.thumb ? '<img data-att-path="' + cnxEsc(item.thumbPath) +
+        '" style="max-width:100%;border-radius:9px;margin-bottom:10px" alt="">' : '') +
       (item.thumb ? '<img src="' + item.thumb + '" style="max-width:100%;border-radius:9px;' +
         'border:1px solid var(--rule);margin-bottom:12px">' : '') +
-      (item.att && !item.thumb ? '<div style="font-size:12px;color:var(--text2);margin-bottom:10px">📄 ' +
+      (item.att && !item.thumb && !item.thumbPath ? '<div style="font-size:12px;color:var(--text2);margin-bottom:10px">📄 ' +
         cnxEsc(item.att.name) + '</div>' : '') +
       '<div style="font-size:13px;color:var(--text2);line-height:1.7;white-space:pre-wrap">' +
         cnxEsc(item.text) + '</div>' +
@@ -9334,7 +9334,7 @@ function buildCapture() {
   document.getElementById('cap-recent').innerHTML = caps.length ? caps.map(c => {
     const img = c.attachment && c.attachment.type && c.attachment.type.indexOf('image/') === 0;
     return '<div class="cap-card" onclick="switchView(\'memory\')">' +
-      (img ? '<img src="' + c.attachment.dataUrl + '" alt="">'
+      (img ? attImgTag(c.attachment, '')
            : '<div class="cap-card-ph">' + (c.attachment ? '📄' : '✦') + '</div>') +
       '<div class="cap-card-b"><div class="cap-card-t">' +
         cnxEsc((c.text || c.attachment && c.attachment.name || '').slice(0, 60)) + '</div>' +
@@ -9542,13 +9542,7 @@ async function rxSend() {
     if (typeof rixLoadHistory === 'function') rixLoadHistory();
   }
 
-  const _prev = buildView;
-  buildView = function (id) {
-    if (id === 'memory')  return buildMemoryDump();
-    if (id === 'capture') return buildCapture();
-    if (id === 'search')  return buildSearchTab();
-    return _prev.apply(this, arguments);
-  };
+  /* folded: routing now lives in the flat dispatcher */
 
   // Nav: drop the RixAI tab (it is a floating widget now), retire the old
   // "Notes" entry in favour of Memory Dump, and surface Search + Capture.
@@ -9723,44 +9717,7 @@ noteVisible = function () {
   return list.sort((a, b) => (b.pinned - a.pinned) || (b.u - a.u));
 };
 
-const _origBuildNotes = buildNotes;
-buildNotes = function () {
-  _origBuildNotes.apply(this, arguments);
-  const all = noteAll().filter(n => !n.trashed);
-  const cnt = id => {
-    const kids = (CNX_TAXONOMY.find(g => g.id === id) || {}).children || [];
-    const ids = [id].concat(kids.map(c => c.id));
-    return all.filter(n => ids.indexOf(n.cat) !== -1).length;
-  };
-  const fold = document.getElementById('note-folders');
-  if (fold) fold.innerHTML =
-    '<div class="note-fold' + (_noteFolder === '__all' && !_noteShowTrash ? ' sel' : '') +
-      '" onclick="noteSetFolder(\'__all\')">All <span>' + all.length + '</span></div>' +
-    CNX_TAXONOMY.map(g =>
-      '<div class="note-fold' + (_noteFolder === g.id && !_noteShowTrash ? ' sel' : '') +
-      '" onclick="noteSetFolder(\'' + g.id + '\')">' + g.icon + ' ' + cnxEsc(g.label) +
-      ' <span>' + cnt(g.id) + '</span></div>' +
-      (g.children || []).map(c =>
-        '<div class="note-fold" style="padding-left:22px;font-size:11px' +
-        (_noteFolder === c.id ? ';background:var(--cyan-lo);color:var(--cyan-hi)' : '') +
-        '" onclick="noteSetFolder(\'' + c.id + '\')">' + cnxEsc(c.label) +
-        ' <span>' + all.filter(n => n.cat === c.id).length + '</span></div>').join('')).join('') +
-    '<div class="note-fold' + (_noteFolder === '__unfiled' ? ' sel' : '') +
-      '" onclick="noteSetFolder(\'__unfiled\')">◇ Unfiled <span>' +
-      all.filter(n => !n.cat).length + '</span></div>' +
-    '<div class="note-fold' + (_noteShowTrash ? ' sel' : '') + '" onclick="noteToggleTrash()" ' +
-      'style="margin-top:6px;border-top:1px solid var(--rule);padding-top:9px">🗑 Trash <span>' +
-      noteAll().filter(n => n.trashed).length + '</span></div>';
-
-  // Swap the editor's folder <select> for the taxonomy picker.
-  const sel = document.querySelector('#note-editor .note-foot select');
-  if (sel && _noteSel) {
-    const n = noteById(_noteSel);
-    sel.style.maxWidth = '190px';
-    sel.innerHTML = taxOptions(n ? n.cat : '');
-    sel.setAttribute('onchange', 'noteMoveTo(\'' + _noteSel + '\',this.value)');
-  }
-};
+/* folded below */
 noteNewFolder = function () {
   alert('Folders now come from your life taxonomy (Personal, CNIS Product, ESecurityIn…), '
       + 'so notes and captures file into the same tree. Use the picker at the bottom of a note.');
@@ -10026,41 +9983,9 @@ function buildOverviewV2() {
   }
 
   // Notes: a Sketch button plus an inline pencil surface
-  const _bn = buildNotes;
-  buildNotes = function () {
-    _bn.apply(this, arguments);
-    const tools = document.querySelector('#note-editor .note-tools');
-    if (tools && !document.getElementById('note-sketch-btn')) {
-      const b = document.createElement('button');
-      b.id = 'note-sketch-btn'; b.title = 'Sketch (Apple Pencil)';
-      b.textContent = '✎'; b.onclick = noteSketchOpen;
-      tools.insertBefore(b, tools.querySelector('span[style*="flex:1"]'));
-    }
-    const ed = document.getElementById('note-editor');
-    if (ed && _noteSel && !document.getElementById('note-sketch')) {
-      const d = document.createElement('div');
-      d.id = 'note-sketch';
-      d.innerHTML = inkToolbar('noteInk') + '<canvas id="note-sketch-canvas"></canvas>' +
-        '<div style="display:flex;gap:8px;margin-top:8px">' +
-        '<button class="btn btn-gold" onclick="noteSketchInsert()">Insert into note</button>' +
-        '<button class="btn" onclick="noteSketchClose()">Cancel</button></div>';
-      const foot = ed.querySelector('.note-foot');
-      ed.insertBefore(d, foot);
-      _noteInk = null;
-    }
-  };
+  /* folded below */
 
-  const _pv = buildView;
-  buildView = function (id) {
-    const out = _pv.apply(this, arguments);
-    if (id === 'dashboard') buildDashboardV2();
-    if (id === 'overview')  buildOverviewV2();
-    if (id === 'ren') {
-      const cv = document.getElementById('ren-ink-canvas');
-      if (cv && !_renInk) _renInk = inkAttach(cv, { height: 300 });
-    }
-    return out;
-  };
+  /* folded: routing now lives in the flat dispatcher */
   if (currentView === 'dashboard') buildDashboardV2();
   if (currentView === 'overview')  buildOverviewV2();
 })();
@@ -10337,17 +10262,7 @@ function tndFlowRender() {
 'body.zen #view-journal .card{background:transparent;border-color:transparent}';
   document.head.appendChild(css);
 
-  const _pv = buildView;
-  buildView = function (id) {
-    const out = _pv.apply(this, arguments);
-    if (id === 'academy')     buildEsecTax();
-    if (id === 'cnx-content') buildCnxContentV2();
-    if (id === 'research')    buildZotero();
-    if (id === 'journal')     buildJournalV2();
-    if (id === 'tending')     tndFlowRender();
-    if (id === 'scheduler' && typeof buildNeurix === 'function') { try { buildNeurix(); } catch (e) {} }
-    return out;
-  };
+  /* folded: routing now lives in the flat dispatcher */
   renderSidebar();
   (function reinject() {
     const nav = document.getElementById('sidebar-nav'); if (!nav) return;
@@ -10473,13 +10388,7 @@ const ESEC_VIEWS = ['academy','academy-content','academy-interactions','academy-
 const CNX_VIEWS  = ['cyberneurix','cnx-website','cnx-cnis','cnx-blogging','cnx-content'];
 
 (function () {
-  const _p = buildView;
-  buildView = function (id) {
-    const out = _p.apply(this, arguments);
-    if (ESEC_VIEWS.indexOf(id) !== -1) taxPanelInto(id, 'esec', 'ESecurityIn — Folders', 'esec-tax');
-    if (CNX_VIEWS.indexOf(id)  !== -1) taxPanelInto(id, 'website', 'CyberNeurix — Folders', 'cnx-tax');
-    return out;
-  };
+  /* folded: routing now lives in the flat dispatcher */
   if (ESEC_VIEWS.indexOf(currentView) !== -1 || CNX_VIEWS.indexOf(currentView) !== -1) buildView(currentView);
 })();
 </script>
@@ -10629,8 +10538,7 @@ function buildCnisModules() {
     '</div>';
 }
 (function () {
-  const _p = buildView;
-  buildView = function (id) { const o = _p.apply(this, arguments); if (id === 'cnx-cnis') buildCnisModules(); return o; };
+  /* folded: routing now lives in the flat dispatcher */
   if (currentView === 'cnx-cnis') buildCnisModules();
 })();
 </script>
@@ -10652,7 +10560,8 @@ function drillItems(catId) {
   const out = [];
   gd('neurix.captures', []).forEach((c, i) => { if (ids.indexOf(c.cat) !== -1)
     out.push({ kind:'capture', text:c.text || '(attachment)', cat:c.cat, t:c.t,
-      thumb:(c.attachment && c.attachment.type && c.attachment.type.indexOf('image/')===0) ? c.attachment.dataUrl : null }); });
+      thumb:(c.attachment && c.attachment.type && c.attachment.type.indexOf('image/')===0) ? (c.attachment.dataUrl || null) : null,
+      thumbPath:(c.attachment && c.attachment.type && c.attachment.type.indexOf('image/')===0 && !c.attachment.dataUrl) ? c.attachment.path : null }); });
   noteAll().forEach(n => { if (!n.trashed && ids.indexOf(n.cat) !== -1)
     out.push({ kind:'note', text:n.title || n.text, cat:n.cat, t:n.u, thumb:null }); });
   return out.sort((a, b) => b.t - a.t);
@@ -10707,6 +10616,8 @@ function drillRender(viewId) {
         'color:var(--text3);margin-bottom:8px">' + cnxEsc(taxLabel(sel)) + '</div>' +
       (items.length ? items.map(i =>
         '<div style="display:flex;gap:9px;padding:8px 0;border-bottom:1px solid var(--rule);align-items:flex-start">' +
+          (i.thumbPath && !i.thumb ? '<img data-att-path="' + cnxEsc(i.thumbPath) +
+            '" style="width:38px;height:38px;object-fit:cover;border-radius:6px;margin-right:8px" alt="">' : '') +
           (i.thumb ? '<img src="' + i.thumb + '" style="width:38px;height:38px;object-fit:cover;border-radius:6px;' +
             'border:1px solid var(--rule);flex-shrink:0">' : '') +
           '<span class="tag ' + (i.kind === 'note' ? 'badge-blue' : 'badge-amber') + '" style="flex-shrink:0">' +
@@ -10727,18 +10638,7 @@ function drillRender(viewId) {
 (function () {
   const VIEWS = ['academy','academy-content','academy-interactions','academy-checklist',
                  'cyberneurix','cnx-website','cnx-cnis','cnx-blogging','cnx-content'];
-  const _p = buildView;
-  buildView = function (id) {
-    const o = _p.apply(this, arguments);
-    if (VIEWS.indexOf(id) !== -1) {
-      // retire the older chip-only panels so there is one folder view, not two
-      ['esec-tax-' + id, 'cnx-tax-' + id, 'esec-tax', 'cnxc-tax'].forEach(x => {
-        const e = document.getElementById(x); if (e) e.remove();
-      });
-      drillRender(id);
-    }
-    return o;
-  };
+  /* folded: routing now lives in the flat dispatcher */
   if (VIEWS.indexOf(currentView) !== -1) buildView(currentView);
 })();
 </script>
@@ -10808,12 +10708,7 @@ const CNIS_STAGES = ['Design of Record','Engine / Core Logic','Data & Evidence I
 })();
 
 (function rerender() {
-  const _p = buildView;
-  buildView = function (id) {
-    const o = _p.apply(this, arguments);
-    if (id === 'cnx-cnis' && typeof buildCnisModules === 'function') buildCnisModules();
-    return o;
-  };
+  /* folded: routing now lives in the flat dispatcher */
   if (currentView === 'cnx-cnis') buildView('cnx-cnis');
   if (currentView === 'memory' && typeof buildMemoryDump === 'function') buildMemoryDump();
 })();
@@ -11222,8 +11117,7 @@ function zenKeepBig() {
   const refit = () => { if (c.offsetWidth > 0) window.dispatchEvent(new Event('resize')); };
   if (det) det.addEventListener('toggle', () => { if (det.open) setTimeout(refit, 60); });
   // Also cover the case where Tending is opened with the section already expanded.
-  const _p = buildView;
-  buildView = function (id) { const o = _p.apply(this, arguments); if (id === 'tending') setTimeout(refit, 120); return o; };
+  /* folded: routing now lives in the flat dispatcher */
   setTimeout(refit, 400);
 })();
 </script>
@@ -11276,10 +11170,1631 @@ body:has(#view-memory.active) #right-rail { display: none; }
     if (rail && window.innerWidth > 1100) rail.style.display = wide ? 'none' : '';
     if (wide) setTimeout(() => window.dispatchEvent(new Event('resize')), 60);
   };
-  const _p = buildView;
-  buildView = function (id) { const o = _p.apply(this, arguments); apply(id); return o; };
+  /* folded: routing now lives in the flat dispatcher */
   apply(currentView);
 })();
+</script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   FOLD — one dispatcher instead of ten nested wrappers.
+   buildView had been reassigned ten times, each layer calling the one before
+   it, so a single tab switch walked a ten-deep closure chain and no layer
+   could see the whole routing table. This defines the table once, flat, and
+   assigns it last: the old chain is never called again.
+   Behaviour is unchanged — every route below was extracted from the wrappers
+   it replaces, including the ones that override the base rather than run after
+   it (Everything, Notes, Memory, Capture, Search).
+   ═══════════════════════════════════════════════════════════════════════════ */
+(function foldDispatcher() {
+  const call = (fn, ...a) => { try { if (typeof fn === 'function') fn(...a); }
+                               catch (e) { console.error('view build failed:', e); } };
+
+  // Views that replace the base builder entirely.
+  const OVERRIDE = {
+    everything: () => call(buildEverything),
+    notes:      () => call(buildNotes),
+    memory:     () => call(buildMemoryDump),
+    capture:    () => call(buildCapture),
+    search:     () => call(buildSearchTab),
+  };
+
+  // The original dispatcher's table.
+  const BASE = {
+    overview: () => call(buildOverview), scheduler: () => call(buildScheduler),
+    dashboard: () => call(buildDashboard), neurix: () => call(buildNeurix),
+    rixai: () => call(buildRixai),
+    academy: () => call(buildAcademyGlance), 'academy-content': () => call(buildAcademyContent),
+    'academy-interactions': () => call(buildAcademyInteractions),
+    'academy-checklist': () => call(buildAcademyChecklist),
+    cyberneurix: () => call(buildCnxGlance), 'cnx-website': () => call(buildCnxWebsite),
+    'cnx-cnis': () => call(buildCnxCnis), 'cnx-blogging': () => call(buildCnxBlogging),
+    'cnx-content': () => call(buildCnxContent),
+    research: () => call(buildResearchAndWP), journal: () => call(buildJournal),
+    tending: () => call(buildTending),
+    health: () => call(buildHealthGlance), 'health-vitals': () => call(buildHealthVitals),
+    'health-exercise': () => call(buildHealthExercise), 'health-goals': () => call(buildHealthGoals),
+    'health-trajectory': () => call(buildHealthTrajectory),
+    ren: () => call(buildRen), trackers: () => call(buildTrackers),
+  };
+
+  const DRILL = ['academy','academy-content','academy-interactions','academy-checklist',
+                 'cyberneurix','cnx-website','cnx-cnis','cnx-blogging','cnx-content'];
+
+  // Everything that used to run *after* the base build, in the order it did.
+  function after(id) {
+    if (id === 'everything') call(digestRender);
+    if (id === 'dashboard')  call(buildDashboardV2);
+    if (id === 'overview')   call(buildOverviewV2);
+    if (id === 'ren') {
+      const cv = document.getElementById('ren-ink-canvas');
+      if (cv && typeof _renInk !== 'undefined' && !_renInk && typeof inkAttach === 'function') {
+        try { _renInk = inkAttach(cv, { height: 300 }); } catch (e) {}
+      }
+    }
+    if (id === 'academy')     call(buildEsecTax);
+    if (id === 'cnx-content') call(buildCnxContentV2);
+    if (id === 'research')    call(buildZotero);
+    if (id === 'journal')     call(buildJournalV2);
+    if (id === 'tending')   { call(tndFlowRender); setTimeout(zenRefit, 120); }
+    if (id === 'cnx-cnis')    call(buildCnisModules);
+    if (id === 'scheduler')   call(buildNeurix);   // Neurix cards live here now
+    if (DRILL.indexOf(id) !== -1) {
+      // The chip-only panels were superseded by the in-tab drill-down; drop any
+      // that a previous build left behind, then render the real one.
+      ['esec-tax-' + id, 'cnx-tax-' + id, 'esec-tax', 'cnxc-tax'].forEach(x => {
+        const e = document.getElementById(x); if (e) e.remove();
+      });
+      call(drillRender, id);
+    }
+    call(widenWritingViews, id);
+  }
+
+  function zenRefit() {
+    const c = document.getElementById('zenBig');
+    if (c && c.offsetWidth > 0) window.dispatchEvent(new Event('resize'));
+  }
+
+  // Notes and Memory get the full column; the rail duplicates the page there.
+  function widenWritingViews(id) {
+    const wide = (id === 'notes' || id === 'memory');
+    const col = document.getElementById('content-col');
+    const rail = document.getElementById('right-rail');
+    if (col) col.style.maxWidth = wide ? '1500px' : '';
+    if (rail && window.innerWidth > 1100) rail.style.display = wide ? 'none' : '';
+  }
+
+  buildView = function (id) {
+    if (OVERRIDE[id]) { OVERRIDE[id](); after(id); return; }
+    if (BASE[id]) BASE[id]();
+    after(id);
+  };
+  window.buildView = buildView;
+
+  // Re-render whatever is on screen through the new, flat path.
+  if (typeof currentView === 'string') buildView(currentView);
+  console.log('[fold] dispatcher flattened —', Object.keys(BASE).length + Object.keys(OVERRIDE).length, 'routes');
+})();
+</script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   NOTIFICATION INBOX — what fired, what is pending, what was missed.
+   Reminders were fire-and-forget: if a push arrived while the phone was face
+   down, it was gone. This reads reminder_alerts directly, so there is a record
+   of every alert regardless of whether you saw the notification.
+   A bell rather than a nav item, per the settled spec: fewer doors.
+   ═══════════════════════════════════════════════════════════════════════════ */
+let _nbOpen = false, _nbRows = null, _nbAt = 0, _nbBusy = false;
+
+async function nbFetch(force) {
+  if (!sbClient || !authUserId) return [];
+  if (!force && _nbRows && Date.now() - _nbAt < 30000) return _nbRows;
+  const since = new Date(Date.now() - 3 * 864e5).toISOString();
+  const until = new Date(Date.now() + 3 * 864e5).toISOString();
+  const { data, error } = await sbClient.from('reminder_alerts')
+    .select('id,text,due_at,notified')
+    .gte('due_at', since).lte('due_at', until)
+    .order('due_at', { ascending: true }).limit(200);
+  if (error) { console.warn('inbox:', error.message); return _nbRows || []; }
+  // The server writes bookkeeping rows into the same table; they are not alerts.
+  _nbRows = (data || []).filter(r => !/^__(scheduler_generated|briefing_sent)__/.test(r.text));
+  _nbAt = Date.now();
+  return _nbRows;
+}
+
+function nbBucket(r) {
+  const due = new Date(r.due_at).getTime(), now = Date.now();
+  if (!r.notified && due > now) return 'pending';
+  if (!r.notified && due <= now) return 'missed';   // due, never sent
+  return due <= now ? 'fired' : 'pending';
+}
+
+/* Route an alert to where it can actually be dealt with. Scheduler alerts are
+   written as "Title (time)", which is how we tell them from ad-hoc ones. */
+function nbTarget(text) {
+  if (/\(\d{1,2}:\d{2}/.test(text)) return 'scheduler';
+  const t = text.toLowerCase();
+  if (/journal|reflect/.test(t)) return 'journal';
+  if (/exercise|sleep|glucose|weight|walk/.test(t)) return 'health-vitals';
+  if (/rixtrace|rixcontrol|neurix|cnis/.test(t)) return 'cnx-cnis';
+  if (/esecurity|academy|competenc/.test(t)) return 'academy';
+  return 'overview';
+}
+
+async function nbRender() {
+  const body = document.getElementById('nb-body');
+  if (!body) return;
+  if (!authUserId) {
+    body.innerHTML = '<div class="empty" style="padding:22px 8px">Sign in to see your alerts.</div>';
+    return;
+  }
+  const rows = await nbFetch(true);
+  const groups = { missed: [], pending: [], fired: [] };
+  rows.forEach(r => groups[nbBucket(r)].push(r));
+  groups.fired.reverse();   // most recent first
+
+  const when = iso => {
+    const d = new Date(iso), today = localDateKey(new Date());
+    const day = localDateKey(d);
+    const t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    if (day === today) return t;
+    if (day === localDateKey(new Date(Date.now() - 864e5))) return 'yesterday ' + t;
+    if (day === localDateKey(new Date(Date.now() + 864e5))) return 'tomorrow ' + t;
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + t;
+  };
+  const section = (key, label, colour) => {
+    const list = groups[key];
+    if (!list.length) return '';
+    return '<div style="font-family:var(--font-mono);font-size:9px;letter-spacing:1.4px;' +
+      'text-transform:uppercase;color:' + colour + ';margin:14px 0 6px">' + label +
+      ' · ' + list.length + '</div>' +
+      list.slice(0, 25).map(r =>
+        '<div onclick="switchView(\'' + nbTarget(r.text) + '\');nbToggle()" ' +
+        'style="display:flex;gap:9px;align-items:baseline;padding:8px 0;' +
+        'border-bottom:1px solid var(--rule);cursor:pointer">' +
+        '<span style="width:6px;height:6px;border-radius:50%;background:' + colour +
+        ';flex-shrink:0;margin-top:5px"></span>' +
+        '<span style="flex:1;font-size:12px;color:var(--text2);line-height:1.5">' +
+        cnxEsc(r.text) + '</span>' +
+        '<span style="font-family:var(--font-mono);font-size:9px;color:var(--text3);flex-shrink:0">' +
+        when(r.due_at) + '</span></div>').join('');
+  };
+
+  body.innerHTML =
+    section('missed', 'Missed', 'var(--red)') +
+    section('pending', 'Coming up', 'var(--gold)') +
+    section('fired', 'Delivered', 'var(--text3)') ||
+    '<div class="empty" style="padding:22px 8px">Nothing in the last or next three days.</div>';
+
+  nbBadge(groups.missed.length);
+}
+
+function nbBadge(n) {
+  const b = document.getElementById('nb-badge');
+  if (!b) return;
+  b.textContent = n > 9 ? '9+' : String(n);
+  b.style.display = n ? 'flex' : 'none';
+}
+function nbToggle() {
+  _nbOpen = !_nbOpen;
+  document.getElementById('nb-wrap').classList.toggle('open', _nbOpen);
+  if (_nbOpen) nbRender();
+}
+// Quiet background check, so the badge is right without opening anything.
+async function nbPoll() {
+  if (_nbBusy || !authUserId) return;
+  _nbBusy = true;
+  try {
+    const rows = await nbFetch(true);
+    nbBadge(rows.filter(r => nbBucket(r) === 'missed').length);
+  } finally { _nbBusy = false; }
+}
+
+(function nbInstall() {
+  if (document.getElementById('nb-wrap')) return;
+  const css = document.createElement('style');
+  css.textContent =
+'#nb-wrap{position:fixed;right:20px;bottom:132px;z-index:520}' +
+'@media(max-width:860px){#nb-wrap{right:16px;bottom:calc(env(safe-area-inset-bottom,0px) + 128px)}}' +
+'#nb-btn{width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;' +
+ 'font-size:17px;cursor:pointer;background:rgba(14,19,24,.9);border:1px solid var(--rule2);' +
+ 'box-shadow:0 6px 20px rgba(0,0,0,.45);position:relative;user-select:none}' +
+'#nb-btn:hover{border-color:var(--gold)}' +
+'#nb-badge{display:none;position:absolute;top:-3px;right:-3px;min-width:17px;height:17px;padding:0 4px;' +
+ 'border-radius:9px;background:var(--red);color:#fff;font-size:10px;font-family:var(--font-mono);' +
+ 'align-items:center;justify-content:center}' +
+'#nb-panel{position:absolute;bottom:calc(100% + 12px);right:0;width:330px;max-width:calc(100vw - 40px);' +
+ 'max-height:60vh;overflow-y:auto;background:linear-gradient(165deg,var(--ink3),var(--ink2));' +
+ 'border:1px solid var(--rule2);border-radius:16px;padding:15px;box-shadow:0 20px 50px rgba(0,0,0,.55);' +
+ 'opacity:0;pointer-events:none;transform:translateY(10px) scale(.96);transform-origin:bottom right;' +
+ 'transition:opacity .2s,transform .2s}' +
+'#nb-wrap.open #nb-panel{opacity:1;transform:none;pointer-events:auto}';
+  document.head.appendChild(css);
+
+  const w = document.createElement('div');
+  w.id = 'nb-wrap';
+  w.innerHTML =
+    '<div id="nb-panel"><div style="display:flex;justify-content:space-between;align-items:center;' +
+      'margin-bottom:4px"><span style="font-family:var(--font-mono);font-size:10px;letter-spacing:1.8px;' +
+      'text-transform:uppercase;color:var(--gold-hi)">◢ Alerts</span>' +
+      '<span style="cursor:pointer;color:var(--text3);font-size:12px" onclick="nbToggle()">✕</span></div>' +
+      '<div style="font-size:10px;color:var(--text3);margin-bottom:2px">Three days either side. Tap to jump.</div>' +
+      '<div id="nb-body"></div></div>' +
+    '<div id="nb-btn" onclick="nbToggle()" title="Alerts">🔔<span id="nb-badge"></span></div>';
+  document.body.appendChild(w);
+
+  setTimeout(nbPoll, 5000);
+  setInterval(nbPoll, 120000);
+})();
+</script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   NOTES — one wrapper instead of two.
+   Previously the taxonomy sidebar and the sketch surface were added by separate
+   wrappers stacked on the base. Both jobs now happen in a single pass.
+   ═══════════════════════════════════════════════════════════════════════════ */
+(function foldNotes() {
+  const base = buildNotes;
+  buildNotes = function () {
+    base.apply(this, arguments);
+
+    // ── Folder rail shows the life taxonomy, so Notes and Memory Dump agree ──
+    const all = noteAll().filter(n => !n.trashed);
+    const cnt = id => {
+      const kids = (CNX_TAXONOMY.find(g => g.id === id) || {}).children || [];
+      const ids = [id].concat(kids.map(c => c.id));
+      return all.filter(n => ids.indexOf(n.cat) !== -1).length;
+    };
+    const fold = document.getElementById('note-folders');
+    if (fold) fold.innerHTML =
+      '<div class="note-fold' + (_noteFolder === '__all' && !_noteShowTrash ? ' sel' : '') +
+        '" onclick="noteSetFolder(\'__all\')">All <span>' + all.length + '</span></div>' +
+      CNX_TAXONOMY.map(g =>
+        '<div class="note-fold' + (_noteFolder === g.id && !_noteShowTrash ? ' sel' : '') +
+        '" onclick="noteSetFolder(\'' + g.id + '\')">' + g.icon + ' ' + cnxEsc(g.label) +
+        ' <span>' + cnt(g.id) + '</span></div>' +
+        (g.children || []).map(c =>
+          '<div class="note-fold" style="padding-left:22px;font-size:11px' +
+          (_noteFolder === c.id ? ';background:var(--cyan-lo);color:var(--cyan-hi)' : '') +
+          '" onclick="noteSetFolder(\'' + c.id + '\')">' + cnxEsc(c.label) +
+          ' <span>' + all.filter(n => n.cat === c.id).length + '</span></div>').join('')).join('') +
+      '<div class="note-fold' + (_noteFolder === '__unfiled' ? ' sel' : '') +
+        '" onclick="noteSetFolder(\'__unfiled\')">◇ Unfiled <span>' +
+        all.filter(n => !n.cat).length + '</span></div>' +
+      '<div class="note-fold' + (_noteShowTrash ? ' sel' : '') + '" onclick="noteToggleTrash()" ' +
+        'style="margin-top:6px;border-top:1px solid var(--rule);padding-top:9px">🗑 Trash <span>' +
+        noteAll().filter(n => n.trashed).length + '</span></div>';
+
+    // ── Editor: taxonomy picker, and the pencil surface ──
+    const sel = document.querySelector('#note-editor .note-foot select');
+    if (sel && _noteSel) {
+      const n = noteById(_noteSel);
+      sel.style.maxWidth = '190px';
+      sel.innerHTML = taxOptions(n ? n.cat : '');
+      sel.setAttribute('onchange', 'noteMoveTo(\'' + _noteSel + '\',this.value)');
+    }
+    const tools = document.querySelector('#note-editor .note-tools');
+    if (tools && !document.getElementById('note-sketch-btn')) {
+      const b = document.createElement('button');
+      b.id = 'note-sketch-btn'; b.title = 'Sketch (Apple Pencil)';
+      b.textContent = '✎'; b.onclick = noteSketchOpen;
+      tools.insertBefore(b, tools.querySelector('span[style*="flex:1"]'));
+    }
+    const ed = document.getElementById('note-editor');
+    if (ed && _noteSel && !document.getElementById('note-sketch')) {
+      const d = document.createElement('div');
+      d.id = 'note-sketch';
+      d.innerHTML = inkToolbar('noteInk') + '<canvas id="note-sketch-canvas"></canvas>' +
+        '<div style="display:flex;gap:8px;margin-top:8px">' +
+        '<button class="btn btn-gold" onclick="noteSketchInsert()">Insert into note</button>' +
+        '<button class="btn" onclick="noteSketchClose()">Cancel</button></div>';
+      const foot = ed.querySelector('.note-foot');
+      ed.insertBefore(d, foot);
+      _noteInk = null;
+    }
+  };
+})();
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ZEN GARDEN — sand and a rake, not a pen.
+   A single stroke drew one line, which is a drawing board. A rake has teeth:
+   each pass cuts several parallel grooves, and a groove reads as a groove
+   because of light on one edge and shadow on the other. The sand keeps its
+   grain, so lines sit *in* it rather than on top.
+   ═══════════════════════════════════════════════════════════════════════════ */
+function zenRakeAttach(canvas, opts) {
+  opts = opts || {};
+  const ctx = canvas.getContext('2d');
+  const dpr = () => window.devicePixelRatio || 1;
+  let drawing = false, last = null, pencilSeen = false;
+  let teeth = 5, gap = 7, mode = 'rake';
+  let sound = null, gainNode = null;
+
+  function paintSand() {
+    const w = canvas.width / dpr(), h = canvas.height / dpr();
+    const g = ctx.createLinearGradient(0, 0, w, h);
+    g.addColorStop(0, '#2a2318'); g.addColorStop(0.55, '#221c14'); g.addColorStop(1, '#191410');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+    // Grain: without it the surface reads as paper, and rake lines look drawn.
+    const grains = Math.round(w * h / 90);
+    for (let i = 0; i < grains; i++) {
+      const x = Math.random() * w, y = Math.random() * h, a = Math.random();
+      ctx.fillStyle = a > 0.55 ? `rgba(214,190,150,${a * 0.09})` : `rgba(0,0,0,${a * 0.10})`;
+      ctx.fillRect(x, y, 1, 1);
+    }
+  }
+  function fit() {
+    const r = canvas.getBoundingClientRect();
+    if (!r.width) return;
+    canvas.width = Math.round(r.width * dpr());
+    canvas.height = Math.round((opts.height || 420) * dpr());
+    canvas.style.height = (opts.height || 420) + 'px';
+    ctx.setTransform(dpr(), 0, 0, dpr(), 0, 0);
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    paintSand();
+  }
+  fit();
+  window.addEventListener('resize', fit);
+
+  /* Rake sound: filtered noise whose volume follows how fast the nib moves, so
+     it hisses while you drag and falls silent the moment you stop. */
+  function ensureSound() {
+    if (sound) return;
+    try {
+      const ac = tndGetAudioCtx();
+      const len = ac.sampleRate * 2;
+      const buf = ac.createBuffer(1, len, ac.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+      const src = ac.createBufferSource(); src.buffer = buf; src.loop = true;
+      const bp = ac.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 2200; bp.Q.value = 0.7;
+      const hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 900;
+      gainNode = ac.createGain(); gainNode.gain.value = 0;
+      src.connect(hp); hp.connect(bp); bp.connect(gainNode); gainNode.connect(ac.destination);
+      src.start(); sound = src;
+    } catch (e) { /* audio is a nicety, never a blocker */ }
+  }
+  function hiss(speed) {
+    if (!gainNode) return;
+    try {
+      gainNode.gain.setTargetAtTime(Math.min(0.05, speed * 0.0022),
+        tndGetAudioCtx().currentTime, 0.08);
+    } catch (e) {}
+  }
+
+  const pos = e => {
+    const r = canvas.getBoundingClientRect();
+    return { x: e.clientX - r.left, y: e.clientY - r.top,
+             p: (e.pressure && e.pressure > 0) ? e.pressure : 0.5 };
+  };
+
+  /** One rake pass: parallel grooves perpendicular to travel, each lit on the
+      upper edge and shadowed on the lower, which is what makes it read as
+      displaced sand rather than ink. */
+  function rakeSegment(a, b, pressure) {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 0.6) return;
+    const nx = -dy / len, ny = dx / len;            // unit normal
+    const spread = gap * (0.75 + pressure * 0.6);
+    const half = (teeth - 1) / 2;
+    for (let t = 0; t < teeth; t++) {
+      const off = (t - half) * spread;
+      const ax = a.x + nx * off, ay = a.y + ny * off;
+      const bx = b.x + nx * off, by = b.y + ny * off;
+      ctx.lineWidth = 2.1;
+      ctx.strokeStyle = 'rgba(0,0,0,0.30)';         // the trough
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(226,205,168,0.26)';   // lit ridge, one side only
+      ctx.beginPath(); ctx.moveTo(ax + nx * 1.6, ay + ny * 1.6);
+      ctx.lineTo(bx + nx * 1.6, by + ny * 1.6); ctx.stroke();
+    }
+  }
+  function smooth(a, b, r) {                        // palm: push sand back flat
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    const g = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, r);
+    g.addColorStop(0, 'rgba(36,30,21,0.85)'); g.addColorStop(1, 'rgba(36,30,21,0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(b.x, b.y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+  function stone(p) {
+    const r = 11 + Math.random() * 13;
+    const g = ctx.createRadialGradient(p.x - r * .35, p.y - r * .4, r * .1, p.x, p.y, r);
+    g.addColorStop(0, '#6b6f78'); g.addColorStop(1, '#2c2f36');
+    ctx.beginPath(); ctx.ellipse(p.x, p.y, r, r * 0.76, Math.random() * Math.PI, 0, Math.PI * 2);
+    ctx.fillStyle = g; ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.lineWidth = 1.4; ctx.stroke();
+  }
+
+  canvas.style.touchAction = 'none';
+  canvas.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'pen') pencilSeen = true;
+    if (pencilSeen && e.pointerType === 'touch') return;   // palm rejection
+    e.preventDefault(); canvas.setPointerCapture(e.pointerId);
+    drawing = true; last = pos(e); ensureSound();
+    if (mode === 'stone') { stone(last); drawing = false; }
+  });
+  canvas.addEventListener('pointermove', e => {
+    if (!drawing) return;
+    if (pencilSeen && e.pointerType === 'touch') return;
+    e.preventDefault();
+    const p = pos(e), speed = Math.hypot(p.x - last.x, p.y - last.y);
+    if (mode === 'rake') rakeSegment(last, p, p.p);
+    else if (mode === 'smooth') smooth(last, p, 26);
+    hiss(mode === 'rake' ? speed : speed * 0.4);
+    last = p;
+  });
+  const up = () => { drawing = false; last = null; hiss(0); };
+  ['pointerup', 'pointercancel', 'pointerleave'].forEach(ev => canvas.addEventListener(ev, up));
+
+  return {
+    setTeeth: n => { teeth = n; },
+    setMode: m => { mode = m; },
+    reset: () => paintSand(),
+    dataURL: () => canvas.toDataURL('image/png'),
+    refit: fit,
+  };
+}
+
+let _zenRake = null;
+function zenMode(m, el) {
+  if (_zenRake) _zenRake.setMode(m);
+  document.querySelectorAll('#zen-tools [data-zm]').forEach(b =>
+    b.classList.toggle('active', b.dataset.zm === m));
+}
+function zenTeeth(n, el) {
+  if (_zenRake) _zenRake.setTeeth(n);
+  document.querySelectorAll('#zen-tools [data-zt]').forEach(b =>
+    b.classList.toggle('active', +b.dataset.zt === n));
+}
+function zenReset() { if (_zenRake) _zenRake.reset(); }
+function zenKeepRake() {
+  if (!_zenRake) return;
+  const caps = gd('neurix.captures', []);
+  caps.push({ text: 'Zen garden — ' + new Date().toLocaleString(), tags: ['zen'], cat: 'kryptonite',
+    t: Date.now(), attachment: { name: 'zen.png', type: 'image/png', size: 0, dataUrl: _zenRake.dataURL() } });
+  sd('neurix.captures', caps);
+  const s = document.getElementById('zenBigState');
+  if (s) { s.textContent = 'kept'; setTimeout(() => { s.textContent = ''; }, 2000); }
+}
+
+(function zenRebuild() {
+  const c = document.getElementById('zenBig');
+  if (!c) return;
+  window._zenInk = null;                       // the pen engine is retired here
+  _zenRake = zenRakeAttach(c, { height: Math.max(380, Math.min(560, Math.round(innerHeight * 0.55))) });
+
+  const tools = document.getElementById('zen-tools');
+  if (tools) tools.innerHTML =
+    '<button class="tnd-zen-ctrl-btn active" data-zm="rake" onclick="zenMode(\'rake\')">Rake</button>' +
+    '<button class="tnd-zen-ctrl-btn" data-zm="smooth" onclick="zenMode(\'smooth\')">Smooth</button>' +
+    '<button class="tnd-zen-ctrl-btn" data-zm="stone" onclick="zenMode(\'stone\')">Stone</button>' +
+    '<span style="width:1px;height:16px;background:var(--tnd-line);margin:0 4px"></span>' +
+    '<button class="tnd-zen-ctrl-btn" data-zt="3" onclick="zenTeeth(3)">3 teeth</button>' +
+    '<button class="tnd-zen-ctrl-btn active" data-zt="5" onclick="zenTeeth(5)">5</button>' +
+    '<button class="tnd-zen-ctrl-btn" data-zt="8" onclick="zenTeeth(8)">8</button>' +
+    '<span style="width:1px;height:16px;background:var(--tnd-line);margin:0 4px"></span>' +
+    '<button class="tnd-zen-ctrl-btn" onclick="zenReset()">Smooth all</button>' +
+    '<button class="tnd-zen-ctrl-btn" onclick="zenKeepRake()">Keep this</button>' +
+    '<span id="zenBigState" style="font-family:\'IBM Plex Mono\',monospace;font-size:11px;color:var(--tnd-mist)"></span>';
+  const label = document.getElementById('tndZenModeLabel');
+  if (label) label.textContent = 'Drag to rake. Pencil pressure widens the grooves.';
+})();
+</script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   MEDITATION — audio and a clock that survive the screen locking.
+   iOS suspends AudioContext the moment the screen locks, which is why the
+   synthesized cymbal went silent and the session appeared to stop. Two changes:
+     · background sound plays from a real <audio> element, which keeps running
+     · the cymbal is rendered ONCE to a WAV and played the same way, so an
+       interval strike still sounds with the phone in a pocket
+   The clock was already anchored to Date.now(), so it self-corrects; it now
+   also re-syncs when the page comes back, and reconciles cymbals that fell due
+   while hidden instead of firing a burst of them.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Render the cymbal to a playable WAV once ─────────────────────────────── */
+function medEncodeWav(buf) {
+  const n = buf.length, ch = buf.numberOfChannels, rate = buf.sampleRate;
+  const out = new DataView(new ArrayBuffer(44 + n * ch * 2));
+  const wr = (o, s) => { for (let i = 0; i < s.length; i++) out.setUint8(o + i, s.charCodeAt(i)); };
+  wr(0, 'RIFF'); out.setUint32(4, 36 + n * ch * 2, true); wr(8, 'WAVEfmt ');
+  out.setUint32(16, 16, true); out.setUint16(20, 1, true); out.setUint16(22, ch, true);
+  out.setUint32(24, rate, true); out.setUint32(28, rate * ch * 2, true);
+  out.setUint16(32, ch * 2, true); out.setUint16(34, 16, true);
+  wr(36, 'data'); out.setUint32(40, n * ch * 2, true);
+  let o = 44;
+  for (let i = 0; i < n; i++)
+    for (let c = 0; c < ch; c++) {
+      const v = Math.max(-1, Math.min(1, buf.getChannelData(c)[i]));
+      out.setInt16(o, v * 32767, true); o += 2;
+    }
+  return new Blob([out], { type: 'audio/wav' });
+}
+let _medBellUrl = null;
+async function medBuildBell() {
+  if (_medBellUrl) return _medBellUrl;
+  const SR = 44100, DUR = 7;
+  const oac = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, SR * DUR, SR);
+  const master = oac.createGain(); master.gain.value = 0.9; master.connect(oac.destination);
+  // Inharmonic partials: a bowl, not a sine beep.
+  const F = 396, RATIOS = [1, 1.19, 2.756, 3.01, 4.13, 5.4], G = [.34, .2, .16, .1, .07, .05];
+  RATIOS.forEach((r, i) => {
+    const o = oac.createOscillator(); o.type = 'sine'; o.frequency.value = F * r;
+    const g = oac.createGain();
+    const dec = DUR - i * 0.7;
+    g.gain.setValueAtTime(0, 0);
+    g.gain.linearRampToValueAtTime(G[i], 0.012 + i * 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, Math.max(0.5, dec));
+    o.connect(g); g.connect(master); o.start(0); o.stop(DUR);
+  });
+  const rendered = await oac.startRendering();
+  _medBellUrl = URL.createObjectURL(medEncodeWav(rendered));
+  return _medBellUrl;
+}
+let _medBellEl = null;
+async function medStrike(vol) {
+  const url = await medBuildBell();
+  if (!_medBellEl) { _medBellEl = new Audio(url); _medBellEl.preload = 'auto'; }
+  _medBellEl.volume = Math.max(0, Math.min(1, vol == null ? 0.9 : vol));
+  try { _medBellEl.currentTime = 0; await _medBellEl.play(); } catch (e) {}
+}
+
+/* ── Background sound: real files, so it survives a lock ─────────────────── */
+const MED_BG = [
+  { id: 'none',     label: 'Silence',      file: null },
+  { id: 'om',       label: 'Om',           file: 'sounds/om-chant.mp3' },
+  { id: 'mani',     label: 'Om Mani',      file: 'sounds/om-mani-chant.mp3' },
+  { id: 'tanpura',  label: 'Tanpura',      file: 'sounds/tanpura.mp3' },
+  { id: 'thanpura', label: 'Tanpura II',   file: 'sounds/thanpura.mp3' },
+  { id: 'ocean',    label: 'Ocean Waves',  file: 'sounds/ocean-waves.mp3' },
+  { id: 'oceanz',   label: 'Deep Ocean',   file: 'sounds/oceanz.mp3' },
+  { id: 'rain',     label: 'Rainfall',     file: 'sounds/rain.mp3' },
+];
+let _medBgEl = null, _medBgId = 'none';
+function medBg(id) {
+  _medBgId = id;
+  sd('tending.med.bg', id);
+  document.querySelectorAll('#med-bg-row [data-bg]').forEach(b =>
+    b.classList.toggle('playing', b.dataset.bg === id));
+  const track = MED_BG.find(t => t.id === id);
+  if (!track || !track.file) { if (_medBgEl) { _medBgEl.pause(); } return; }
+  if (!_medBgEl) { _medBgEl = new Audio(); _medBgEl.loop = true; _medBgEl.setAttribute('playsinline',''); }
+  if (!_medBgEl.src.endsWith(track.file)) _medBgEl.src = track.file;
+  _medBgEl.volume = parseFloat(gd('tending.med.bgVol', 0.5));
+  _medBgEl.play().catch(e => {
+    const s = document.getElementById('med-bg-state');
+    if (s) s.textContent = 'Could not start: ' + e.message;
+  });
+}
+function medBgVol(v) {
+  sd('tending.med.bgVol', v);
+  if (_medBgEl) _medBgEl.volume = parseFloat(v);
+}
+
+/* ── Lock-safe clock ──────────────────────────────────────────────────────── */
+let _medEndsAt = 0, _medTick = null, _medCymbalEvery = 5, _medStruck = 0;
+
+function medFmt(sec) {
+  const m = Math.floor(Math.max(0, sec) / 60), s = Math.max(0, sec) % 60;
+  return String(m).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
+}
+function medPaint() {
+  const left = Math.max(0, Math.round((_medEndsAt - Date.now()) / 1000));
+  const el = document.getElementById('tndMedTime');
+  if (el) el.textContent = medFmt(left);
+  const total = tndMedDurationMins * 60;
+  const ring = document.getElementById('tndMedRingProg');
+  if (ring) ring.style.strokeDashoffset = String(TND_CIRC * (left / total));
+  const nx = document.getElementById('tndCymbalNext');
+  if (nx) {
+    if (_medCymbalEvery && left > 0) {
+      const elapsed = total - left;
+      nx.textContent = medFmt(_medCymbalEvery * 60 - (elapsed % (_medCymbalEvery * 60)));
+    } else nx.textContent = '';
+  }
+  return left;
+}
+function medLoop() {
+  const left = medPaint();
+  const elapsed = tndMedDurationMins * 60 - left;
+  if (_medCymbalEvery && left > 0) {
+    const due = Math.floor(elapsed / (_medCymbalEvery * 60));
+    // If the screen was locked through several marks, sound once — not a burst.
+    if (due > _medStruck) { _medStruck = due; medStrike(0.75); }
+  }
+  if (left <= 0) medFinish();
+}
+function medStart() {
+  const btn = document.getElementById('tndMedStartBtn');
+  if (_medTick) {                       // pause
+    clearInterval(_medTick); _medTick = null;
+    if (btn) btn.textContent = 'Resume';
+    if (_medBgEl) _medBgEl.pause();
+    return;
+  }
+  if (!_medEndsAt || _medEndsAt < Date.now()) {
+    _medEndsAt = Date.now() + tndMedDurationMins * 60000;
+    _medStruck = 0;
+  }
+  if (btn) btn.textContent = 'Pause';
+  medBg(_medBgId);                      // the gesture that unlocks audio on iOS
+  medStrike(0.6);                       // opening bell
+  _medTick = setInterval(medLoop, 1000);
+  medPaint();
+}
+function medReset() {
+  clearInterval(_medTick); _medTick = null;
+  _medEndsAt = 0; _medStruck = 0;
+  const btn = document.getElementById('tndMedStartBtn');
+  if (btn) btn.textContent = 'Start';
+  if (_medBgEl) _medBgEl.pause();
+  const el = document.getElementById('tndMedTime');
+  if (el) el.textContent = medFmt(tndMedDurationMins * 60);
+  const ring = document.getElementById('tndMedRingProg');
+  if (ring) ring.style.strokeDashoffset = String(TND_CIRC);
+}
+function medFinish() {
+  clearInterval(_medTick); _medTick = null;
+  medStrike(1); setTimeout(() => medStrike(0.65), 1600); setTimeout(() => medStrike(0.4), 3200);
+  if (_medBgEl) setTimeout(() => _medBgEl.pause(), 6000);
+  tndSaveMedSession(tndMedDurationMins);
+  _medEndsAt = 0; _medStruck = 0;
+  const btn = document.getElementById('tndMedStartBtn');
+  if (btn) btn.textContent = 'Start';
+  medPaint();
+}
+function medCymbalEvery(m) {
+  _medCymbalEvery = m; sd('tending.med.cymbalEvery', m);
+  document.querySelectorAll('#med-cym-row [data-cy]').forEach(b =>
+    b.classList.toggle('active', +b.dataset.cy === m));
+  medPaint();
+}
+// Coming back from a locked screen: repaint from wall-clock rather than ticks.
+document.addEventListener('visibilitychange', () => { if (!document.hidden && _medTick) medLoop(); });
+
+(function medInstall() {
+  const host = document.querySelector('#view-tending .tnd-med-ambient-section');
+  if (!host || document.getElementById('med-bg-row')) return;
+  _medBgId = gd('tending.med.bg', 'none');
+  _medCymbalEvery = gd('tending.med.cymbalEvery', 5);
+
+  host.innerHTML =
+    '<p class="tnd-med-ambient-label">Background — keeps playing when the screen locks</p>' +
+    '<div class="tnd-med-chant-row" id="med-bg-row">' +
+      MED_BG.map(t => '<button class="tnd-med-chant-btn' + (t.id === _medBgId ? ' playing' : '') +
+        '" data-bg="' + t.id + '" onclick="medBg(\'' + t.id + '\')">' + t.label + '</button>').join('') +
+    '</div>' +
+    '<div id="med-bg-state" style="font-size:11px;color:var(--tnd-ember);min-height:14px"></div>' +
+    '<div class="tnd-sound-volume-row" style="margin-top:6px">' +
+      '<span class="tnd-sound-volume-label">Volume</span>' +
+      '<input type="range" class="tnd-vol-slider" min="0" max="1" step="0.05" value="' +
+        gd('tending.med.bgVol', 0.5) + '" oninput="medBgVol(this.value)"></div>' +
+    '<p class="tnd-med-ambient-label" style="margin-top:16px">Cymbal every</p>' +
+    '<div class="tnd-med-chant-row" id="med-cym-row">' +
+      [0, 5, 10, 15].map(m => '<button class="tnd-med-dur-btn' +
+        (m === _medCymbalEvery ? ' active' : '') + '" data-cy="' + m +
+        '" onclick="medCymbalEvery(' + m + ')">' + (m ? m + ' min' : 'Off') + '</button>').join('') +
+    '</div>' +
+    '<p style="font-size:11.5px;color:var(--tnd-mist);line-height:1.5;margin-top:10px">' +
+      'Start the session before locking. Sound and the clock both keep running; ' +
+      'the cymbal sounds on each mark even in your pocket.</p>';
+
+  // Take over the existing controls, which used the suspend-prone engine.
+  const s = document.getElementById('tndMedStartBtn');
+  if (s) { s.onclick = medStart; s.removeAttribute('onclick'); }
+  const r = document.getElementById('tndMedResetBtn');
+  if (r) { r.onclick = medReset; r.removeAttribute('onclick'); }
+  document.querySelectorAll('.tnd-med-dur-btn[data-mins]').forEach(b => {
+    b.onclick = () => {
+      if (_medTick) return;
+      document.querySelectorAll('.tnd-med-dur-btn[data-mins]').forEach(x => x.classList.remove('active'));
+      b.classList.add('active');
+      tndMedDurationMins = parseInt(b.dataset.mins, 10);
+      medReset();
+    };
+  });
+  medReset();
+})();
+</script>
+
+<script>
+/* Every to-do was collected twice: the base collector adds them all undated,
+   and the later coverage pass added the dated ones again once cnxAdd started
+   stamping `t`. That double-counted them in the Everything feed, in search, in
+   RixAI's context and in the per-area census.
+   The collector now emits to-dos exactly once — dated where a timestamp
+   exists, undated where it does not. */
+(function dedupeTodos() {
+  const prev = cnxCollectRecords;
+  cnxCollectRecords = function () {
+    const out = prev.apply(this, arguments).filter(r => r.source !== 'todo');
+    try {
+      gd('neurix.todos', []).forEach(t => {
+        const r = cnxRec('todo', t.text, t.t || null, [t.priority || 'med']);
+        if (r) out.push(r);
+      });
+    } catch (e) { console.warn('todo collect:', e); }
+    return out;
+  };
+})();
+</script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   INFORMATION DESIGN PASS — the settled spec, in one place.
+
+   1. Sidebar gains section headers, so the shape of the system is legible.
+   2. Everything / Memory Dump / Capture / Search / Notes collapse to one door,
+      "Brain", with the five as modes inside it.
+   3. Overview leads with a capture-and-ask bar.
+   4. Cut: nav streak dots, the composite percentage, the push-setup card once
+      enabled, and the rail's duplication of the page.
+   5. Rail becomes capture / ask / timer.
+   6. Mind map derived from the record instead of hand-typed.
+   7. Two typographic registers: operational and reflective.
+   News and podcasts stay, per your call.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+const BRAIN_MODES = [
+  { id:'everything', label:'Stream',  hint:'everything, newest first' },
+  { id:'memory',     label:'Filed',   hint:'by area' },
+  { id:'notes',      label:'Notes',   hint:'write' },
+  { id:'capture',    label:'Capture', hint:'in' },
+  { id:'search',     label:'Search',  hint:'recall' },
+];
+const BRAIN_IDS = BRAIN_MODES.map(m => m.id);
+
+const NAV_SECTIONS = [
+  { label:'Today', ids:['overview','scheduler'] },
+  { label:'Brain', ids:BRAIN_IDS.slice(0,1) },          // one door; modes live inside
+  { label:'Work',  ids:['academy','cyberneurix','research'] },
+  { label:'Body',  ids:['health'] },
+  { label:'Mind',  ids:['journal','tending'] },
+  { label:'Tools', ids:['dashboard','ren','trackers'] },
+];
+
+/* ── 1 + 2: sidebar with sections, and five doors become one ─────────────── */
+function navRender() {
+  const nav = document.getElementById('sidebar');
+  if (!nav) return;
+  const byId = {}; NAV.forEach(n => byId[n.id] = n);
+  const mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+
+  nav.innerHTML =
+    '<div id="sidebar-brand"><div class="mark">CNX Master OS</div>' +
+      '<div class="sub">Command Center</div></div>' +
+    '<div id="sidebar-nav">' +
+      NAV_SECTIONS.map(sec =>
+        '<div class="nav-sec">' + cnxEsc(sec.label) + '</div>' +
+        sec.ids.map(id => {
+          const item = byId[id]; if (!item) return '';
+          const isBrain = id === 'everything';
+          const label = isBrain ? 'Brain' : item.label;
+          const icon  = isBrain ? '🧠' : item.icon;
+          return '<div class="nav-group" data-group="' + id + '">' +
+            '<div class="nav-main" data-nav="' + id + '" onclick="onNavClick(\'' + id + '\')">' +
+            '<span class="ic">' + icon + '</span><span class="lbl">' + cnxEsc(label) + '</span>' +
+            (item.sub ? '<span class="chev">▸</span>' : '') + '</div>' +
+            (item.sub ? '<div class="nav-sub">' + item.sub.map(s =>
+              '<div class="nav-sub-item" data-subnav="' + s.id + '" ' +
+              'onclick="event.stopPropagation();switchView(\'' + s.id + '\')">' +
+              cnxEsc(s.label) + '</div>').join('') + '</div>' : '') +
+          '</div>';
+        }).join('')).join('') +
+    '</div>' +
+    '<div id="sidebar-foot"><div id="sync-pill"><span id="sync-dot"></span>' +
+      '<span id="sync-label">Synced locally</span></div>' +
+      '<div onclick="pinStartChange()" style="margin-top:8px;font-family:var(--font-mono);' +
+      'font-size:9px;color:var(--text3);cursor:pointer;letter-spacing:1px">🔒 Change PIN</div></div>';
+
+  // The overlay shortcuts stay reachable from the rail; the sidebar rows that
+  // duplicated them are gone, since Brain now owns capture and search.
+  markNavActive(currentView);
+}
+// Streak dots deliberately removed: they scored how often you opened a tab,
+// including the tab that remembers your mother.
+renderNavStreaks = function () {};
+recordNavVisit  = function () {};
+
+function markNavActive(viewId) {
+  const top = BRAIN_IDS.indexOf(viewId) !== -1 ? 'everything'
+            : (NAV.find(n => n.sub && n.sub.some(s => s.id === viewId))?.id || viewId);
+  document.querySelectorAll('.nav-main, .nav-sub-item').forEach(e => e.classList.remove('active'));
+  const m = document.querySelector('.nav-main[data-nav="' + top + '"]');
+  if (m) m.classList.add('active');
+  const s = document.querySelector('.nav-sub-item[data-subnav="' + viewId + '"]');
+  if (s) {
+    s.classList.add('active');
+    const g = s.closest('.nav-group');
+    if (g) { g.classList.add('expanded'); g.querySelector('.nav-main')?.classList.add('expanded'); }
+  }
+}
+
+/** Mode bar injected at the top of each Brain view, so five views read as one. */
+function brainBar(active) {
+  return '<div class="brain-bar">' + BRAIN_MODES.map(m =>
+    '<span class="brain-tab' + (m.id === active ? ' on' : '') +
+    '" onclick="switchView(\'' + m.id + '\')">' + m.label +
+    '<small>' + m.hint + '</small></span>').join('') + '</div>';
+}
+function brainMount(viewId) {
+  if (BRAIN_IDS.indexOf(viewId) === -1) return;
+  const host = document.getElementById('view-' + viewId);
+  if (!host) return;
+  let bar = host.querySelector(':scope > .brain-bar-wrap');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.className = 'brain-bar-wrap';
+    host.insertBefore(bar, host.firstChild);
+  }
+  bar.innerHTML = brainBar(viewId);
+}
+
+/* ── 3: Overview leads with capture-and-ask ─────────────────────────────── */
+function omniRun(mode) {
+  const inp = document.getElementById('omni-input');
+  const text = inp.value.trim();
+  if (!text) return;
+  const state = document.getElementById('omni-state');
+  if (mode === 'capture') {
+    const a = typeof autoClassify === 'function' ? autoClassify(text) : { cat:'', tags:[] };
+    const caps = gd('neurix.captures', []);
+    caps.push({ text, tags: a.tags.length ? a.tags : [], cat: a.cat || '', t: Date.now(), attachment: null });
+    sd('neurix.captures', caps);
+    inp.value = '';
+    state.textContent = a.cat ? '✓ filed to ' + taxLabel(a.cat) : '✓ captured';
+    setTimeout(() => { state.textContent = ''; }, 2600);
+  } else {
+    inp.value = '';
+    state.textContent = '';
+    if (typeof rxToggle === 'function') {
+      const w = document.getElementById('rx-float');
+      if (w && !w.classList.contains('open')) rxToggle();
+      const ri = document.getElementById('rx-inp');
+      if (ri) { ri.value = text; rxSend(); }
+    }
+  }
+}
+function omniMount() {
+  const host = document.getElementById('view-overview');
+  if (!host || document.getElementById('omni')) return;
+  const d = document.createElement('div');
+  d.id = 'omni';
+  d.innerHTML =
+    '<input id="omni-input" placeholder="Write it down, or ask…" ' +
+      'onkeydown="if(event.key===\'Enter\')omniRun(event.metaKey||event.ctrlKey?\'ask\':\'capture\')">' +
+    '<div id="omni-row">' +
+      '<button class="btn btn-gold" onclick="omniRun(\'capture\')">✦ Capture</button>' +
+      '<button class="btn" onclick="omniRun(\'ask\')">🧠 Ask RixAI</button>' +
+      '<span id="omni-state"></span>' +
+      '<span id="omni-hint">#hashtags file it · ⌘↵ to ask</span>' +
+    '</div>';
+  host.insertBefore(d, host.firstChild);
+}
+
+/* ── 4: the cuts ─────────────────────────────────────────────────────────── */
+function applyCuts() {
+  // Setup is not furniture: retire the push card once permission is granted.
+  const push = document.getElementById('push-notif-card');
+  if (push) push.style.display =
+    (typeof Notification !== 'undefined' && Notification.permission === 'granted') ? 'none' : '';
+
+  // The composite percentage averaged incommensurable things — checklist
+  // completion, pipeline progress, and a proxy for blogging. Replaced with a
+  // count that means exactly what it says.
+  const sig = document.getElementById('ov-signal');
+  if (sig) {
+    const open = gd('checklist.items', []).filter(i => !i.done).length;
+    const recs = cnxCollectRecords().length;
+    sig.innerHTML =
+      '<div style="flex:1;min-width:130px"><div class="sig-l">Open reminders</div>' +
+        '<div class="sig-v" style="color:' + (open ? 'var(--amber)' : 'var(--green)') + '">' + open + '</div></div>' +
+      '<div style="flex:1;min-width:130px"><div class="sig-l">Things recorded</div>' +
+        '<div class="sig-v" style="color:var(--cyan-hi)">' + recs + '</div></div>';
+  }
+}
+
+/* ── 5: rail is capture / ask / timer, not a second copy of the page ────── */
+async function railRender() {
+  const rail = document.getElementById('right-rail');
+  if (!rail) return;
+  const t = gd('pomodoro.completedByDay.' + todayKey(), 0);
+  rail.innerHTML =
+    '<div id="rail-drawer-handle" onclick="document.getElementById(\'right-rail\').classList.toggle(\'open\')">' +
+      '📌 Capture · Ask · Timer</div>' +
+    '<div class="rail-section"><div class="rail-head">✦ Capture</div><div class="rail-card">' +
+      '<textarea class="inp" id="rail-cap" rows="3" placeholder="Put it down and move on…" ' +
+        'style="font-size:12px;line-height:1.55"></textarea>' +
+      '<button class="btn btn-gold" style="width:100%;margin-top:7px;font-size:11px" ' +
+        'onclick="railCapture()">Capture</button>' +
+      '<div id="rail-cap-state" style="font-family:var(--font-mono);font-size:9px;' +
+        'color:var(--green);margin-top:5px;min-height:12px"></div></div></div>' +
+    '<div class="rail-section"><div class="rail-head">🧠 Ask</div><div class="rail-card">' +
+      '<div id="rail-ans" style="font-size:11px;color:var(--text2);line-height:1.6;' +
+        'margin-bottom:7px;max-height:180px;overflow-y:auto"></div>' +
+      '<div style="display:flex;gap:6px"><input class="inp" id="rail-q" placeholder="Ask anything…" ' +
+        'style="font-size:11px;padding:7px 9px" onkeydown="if(event.key===\'Enter\')railAsk()">' +
+      '<button class="btn btn-gold" style="padding:7px 10px;font-size:11px" onclick="railAsk()">→</button>' +
+      '</div></div></div>' +
+    '<div class="rail-section"><div class="rail-head">◷ Focus today</div><div class="rail-card">' +
+      '<div style="font-family:var(--font-display);font-size:26px;color:var(--gold-hi)">' + t + '</div>' +
+      '<div style="font-size:10px;color:var(--text3);margin-top:2px">' +
+        'pomodoro' + (t === 1 ? '' : 's') + ' completed</div></div></div>';
+}
+function railCapture() {
+  const ta = document.getElementById('rail-cap');
+  const text = (ta.value || '').trim();
+  if (!text) return;
+  const a = typeof autoClassify === 'function' ? autoClassify(text) : { cat:'', tags:[] };
+  const caps = gd('neurix.captures', []);
+  caps.push({ text, tags: a.tags, cat: a.cat || '', t: Date.now(), attachment: null });
+  sd('neurix.captures', caps);
+  ta.value = '';
+  const s = document.getElementById('rail-cap-state');
+  if (s) { s.textContent = a.cat ? '✓ ' + taxLabel(a.cat) : '✓ captured';
+           setTimeout(() => { s.textContent = ''; }, 2400); }
+}
+async function railAsk() {
+  const q = document.getElementById('rail-q');
+  const text = (q.value || '').trim(); if (!text) return;
+  q.value = '';
+  const out = document.getElementById('rail-ans');
+  out.innerHTML = '<span style="color:var(--text3)">Thinking…</span>';
+  try {
+    const { text: ctx } = rixBuildContext(text);
+    const r = await fetch(RIXAI_ENDPOINT, {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer ' + SUPA_KEY, 'apikey':SUPA_KEY },
+      body: JSON.stringify({ question:text, context:ctx, history:[] }),
+    });
+    const d = await r.json();
+    out.innerHTML = cnxEsc((d.answer || d.error || '(no response)')).replace(/\n/g, '<br>');
+  } catch (e) { out.innerHTML = '<span style="color:var(--red)">' + cnxEsc(e.message) + '</span>'; }
+}
+
+/* ── 6: mind map derived from the record ────────────────────────────────── */
+function mmItems() {
+  // The same source the area census counts, so the picture and the numbers can
+  // never disagree. Records from cnxCollectRecords carry no folder, which is
+  // why an earlier version of this map drew nothing.
+  const out = [];
+  gd('neurix.captures', []).forEach(c => { if (c.cat) out.push({ cat:c.cat, t:c.t }); });
+  (typeof noteAll === 'function' ? noteAll() : []).forEach(n => {
+    if (!n.trashed && n.cat) out.push({ cat:n.cat, t:n.updated || n.created });
+  });
+  return out;
+}
+function mmGroup(cat) {
+  // Roll a sub-folder up to its top-level area, so the map is about areas of
+  // life rather than every leaf folder.
+  let c = cat, guard = 0;
+  while (TAX_INDEX[c] && TAX_INDEX[c].parent && guard++ < 8) c = TAX_INDEX[c].parent;
+  return c;
+}
+function mmOpen(cat) {
+  if (typeof mdSelectCat === 'function') mdSelectCat(cat);
+  switchView('memory');
+}
+function drawDerivedMindMap() {
+  const svg = document.getElementById('ov-mm-svg');
+  if (!svg) return;
+  const info = document.getElementById('ov-mm-info');
+  const items = mmItems();
+  const group = {};
+  items.forEach(i => { const g = mmGroup(i.cat); group[g] = (group[g] || 0) + 1; });
+
+  const nodes = CNX_TAXONOMY.map(g => ({ id:g.id, label:g.label, n:group[g.id] || 0 }))
+    .filter(n => n.n > 0).sort((a, b) => b.n - a.n).slice(0, 7);
+  const unfiled = gd('neurix.captures', []).filter(c => !c.cat).length;
+
+  if (!nodes.length) {
+    svg.innerHTML = '<text x="360" y="190" text-anchor="middle" fill="#4A5564" font-size="12.5" ' +
+      'font-family="monospace">This map is drawn from what you file.</text>' +
+      '<text x="360" y="212" text-anchor="middle" fill="#3A4450" font-size="11" ' +
+      'font-family="monospace">Capture something with a #hashtag and it appears here.</text>';
+    if (info) info.innerHTML = '';
+    return;
+  }
+
+  const max = nodes[0].n, cx = 360, cy = 200, R = nodes.length === 1 ? 0 : 132;
+  const pts = nodes.map((n, i) => {
+    const a = (i / nodes.length) * Math.PI * 2 - Math.PI / 2;
+    return Object.assign({}, n, {
+      x: cx + Math.cos(a) * R, y: cy + Math.sin(a) * R,
+      r: 21 + Math.round((n.n / max) * 23),
+    });
+  });
+  const hue = v => v > 0.66 ? '#3DAA72' : v > 0.33 ? '#D4953A' : '#4A90E2';
+  let h = '';
+
+  // Edges are co-occurrence: two areas you worked on the same day.
+  const days = {};
+  items.forEach(i => {
+    if (!i.t) return;
+    const d = new Date(i.t).toISOString().slice(0, 10);
+    (days[d] = days[d] || new Set()).add(mmGroup(i.cat));
+  });
+  const pair = {};
+  Object.keys(days).forEach(d => {
+    const a = Array.from(days[d]);
+    for (let i = 0; i < a.length; i++) for (let j = i + 1; j < a.length; j++) {
+      const k = [a[i], a[j]].sort().join('|'); pair[k] = (pair[k] || 0) + 1;
+    }
+  });
+  Object.keys(pair).sort((x, y) => pair[y] - pair[x]).slice(0, 8).forEach(k => {
+    const parts = k.split('|');
+    const na = pts.find(p => p.id === parts[0]), nb = pts.find(p => p.id === parts[1]);
+    if (!na || !nb) return;
+    h += '<line x1="' + na.x + '" y1="' + na.y + '" x2="' + nb.x + '" y2="' + nb.y +
+      '" stroke="#4A5060" stroke-width="' + Math.min(4, 1 + pair[k] * 0.7) + '" opacity="0.35"/>';
+  });
+
+  pts.forEach(p => {
+    const c = hue(p.n / max);
+    const words = String(p.label).split(' ');
+    const l1 = words[0], l2 = words.slice(1).join(' ');
+    h += '<g style="cursor:pointer" onclick="mmOpen(\'' + p.id + '\')">' +
+      '<circle cx="' + p.x + '" cy="' + p.y + '" r="' + p.r + '" fill="rgba(10,10,26,.88)" ' +
+      'stroke="' + c + '" stroke-width="2"/>' +
+      '<text x="' + p.x + '" y="' + (p.y - 3) + '" text-anchor="middle" fill="' + c +
+      '" font-size="9" font-family="monospace">' + cnxEsc(l1) + '</text>' +
+      (l2 ? '<text x="' + p.x + '" y="' + (p.y + 7) + '" text-anchor="middle" fill="' + c +
+        '" font-size="8" font-family="monospace" opacity=".75">' + cnxEsc(l2) + '</text>' : '') +
+      '<text x="' + p.x + '" y="' + (p.y + (l2 ? 18 : 11)) + '" text-anchor="middle" fill="' + c +
+      '" font-size="9" font-family="monospace" opacity=".85">' + p.n + '</text></g>';
+  });
+  svg.innerHTML = h;
+
+  if (info) info.innerHTML =
+    '<div style="padding:9px 11px;background:var(--ink4);border-left:2px solid var(--cyan);' +
+    'border-radius:0 8px 8px 0;font-size:11.5px;color:var(--text2);line-height:1.6">' +
+    'Drawn from what you file: circle size is volume, lines join areas you worked on the ' +
+    'same day. Tap one to open it.' +
+    (unfiled ? ' <span style="color:var(--amber)">' + unfiled +
+      ' capture' + (unfiled === 1 ? '' : 's') + ' not filed yet, so not shown.</span>' : '') +
+    '</div>';
+}
+
+/* ── install ─────────────────────────────────────────────────────────────── */
+(function specInstall() {
+  const css = document.createElement('style');
+  css.textContent =
+'.nav-sec{font-family:var(--font-mono);font-size:8.5px;letter-spacing:1.6px;text-transform:uppercase;' +
+ 'color:var(--text3);padding:14px 12px 5px;opacity:.75}' +
+'.nav-sec:first-child{padding-top:6px}' +
+'.brain-bar-wrap{margin-bottom:14px}' +
+'.brain-bar{display:flex;gap:5px;flex-wrap:wrap;border-bottom:1px solid var(--rule);padding-bottom:9px}' +
+'.brain-tab{padding:7px 13px;border-radius:8px;font-size:12px;color:var(--text3);cursor:pointer;' +
+ 'border:1px solid transparent;line-height:1.25}' +
+'.brain-tab:hover{color:var(--text2);background:var(--ink3)}' +
+'.brain-tab.on{background:var(--cyan-lo);border-color:var(--cyan);color:var(--cyan-hi);font-weight:500}' +
+'.brain-tab small{display:block;font-size:8.5px;opacity:.6;font-family:var(--font-mono)}' +
+'#omni{margin-bottom:16px}' +
+'#omni-input{width:100%;background:var(--ink3);border:1px solid var(--rule2);border-radius:12px;' +
+ 'color:var(--text);padding:15px 17px;font-family:var(--font-body);font-size:15px;outline:none;' +
+ 'transition:border-color .2s}' +
+'#omni-input:focus{border-color:var(--cyan)}' +
+'#omni-input::placeholder{color:var(--text3)}' +
+'#omni-row{display:flex;gap:8px;align-items:center;margin-top:9px;flex-wrap:wrap}' +
+'#omni-state{font-family:var(--font-mono);font-size:10px;color:var(--green)}' +
+'#omni-hint{margin-left:auto;font-family:var(--font-mono);font-size:9px;color:var(--text3)}' +
+'.sig-l{font-family:var(--font-mono);font-size:9px;color:var(--text3);text-transform:uppercase;' +
+ 'letter-spacing:1px}' +
+'.sig-v{font-family:var(--font-display);font-size:26px}' +
+/* 7 — reflective register: bigger, looser, narrower measure */
+'#view-journal,#view-tending{font-size:17.5px;line-height:1.95;letter-spacing:.1px}' +
+'#view-journal .card,#view-tending .tnd-card{max-width:660px;padding:30px 34px}' +
+'#view-journal .card-title,#view-tending .card-title{font-family:var(--font-mono);font-size:10px;' +
+ 'letter-spacing:2.4px;opacity:.6;margin-bottom:22px}' +
+'#view-journal p,#view-tending p{font-size:17.5px;line-height:1.95;max-width:62ch;margin-bottom:1.1em}' +
+'#view-journal .jta,#view-journal textarea.inp,#view-journal input.inp{font-size:17px;' +
+ 'line-height:2;padding:18px 20px;letter-spacing:.1px}' +
+'#view-tending .tnd-phase-text,#view-tending .tnd-hint{font-size:17px;line-height:1.95;max-width:62ch}' +
+'#view-journal h2,#view-tending h2,#view-tending .tnd-card h2{font-family:var(--font-display);' +
+ 'font-size:23px;line-height:1.4;margin-bottom:16px;font-weight:400}' +
+'#view-journal .btn,#view-tending .btn{font-size:12px}';
+  document.head.appendChild(css);
+
+  // renderSidebar() is called from several places and rebuilds #sidebar
+  // wholesale. Replacing it — rather than calling navRender() once — means any
+  // later rebuild still comes back with sections, instead of silently reverting
+  // to the flat list. The ⌘K / ⌘J rows are gone from the sidebar by design:
+  // Brain owns search and capture now, and the shortcuts are bound to the
+  // document, so they keep working.
+  renderSidebar = navRender;
+  renderSidebar();
+  omniMount();
+
+  const prev = buildView;
+  buildView = function (id) {
+    const out = prev.apply(this, arguments);
+    brainMount(id);
+    markNavActive(id);
+    if (id === 'overview') { applyCuts(); drawDerivedMindMap(); }
+    return out;
+  };
+  // The rail no longer mirrors the page, so it needs building only once.
+  renderRightRail = async function () { await railRender(); };
+  railRender();
+  buildView(currentView);
+})();
+</script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   PHONE AND IPAD
+
+   Five measured problems, not guesses:
+
+   1. iPad portrait (1024pt): the rail is fixed at 420px with an opaque
+      background and sits *on top of* 388px of content. The layout reserved
+      space for it only above 1200.
+   2. 110 inputs render below 16px. Safari zooms the page on focus at anything
+      smaller and does not zoom back — every tap on a field shifts the layout.
+   3. 47 controls are under Apple's 44pt minimum target.
+   4. Nothing listens for orientation change, so every canvas — zen garden,
+      REN scribble, note sketch — keeps stale pixel dimensions after an iPad
+      rotates, and Pencil strokes land offset from the nib.
+   5. The rail's drawer handle lives inside the rail, so once the rail is
+      off-canvas there is nothing left to pull it back.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+(function responsive() {
+
+  /* ── 5: a handle that is not inside the thing it opens ─────────────────── */
+  if (!document.getElementById('rail-tab')) {
+    const tab = document.createElement('button');
+    tab.id = 'rail-tab';
+    tab.setAttribute('aria-label', 'Capture, ask, timer');
+    tab.innerHTML = '<span>✦</span>';
+    const setRail = (open) => {
+      const r = document.getElementById('right-rail');
+      r.classList.toggle('open', open);
+      // Inline beats every stylesheet rule here, so the drawer behaves the same
+      // on a phone as on an iPad regardless of which media query also matches.
+      r.style.transform = open ? 'translateX(0)' : 'translateX(100%)';
+      tab.classList.toggle('on', open);
+    };
+    window.railSet = setRail;
+    tab.onclick = () => setRail(!document.getElementById('right-rail').classList.contains('open'));
+    document.body.appendChild(tab);
+    // Tapping the page closes the drawer, the way every iOS sheet behaves.
+    document.addEventListener('click', (e) => {
+      const r = document.getElementById('right-rail');
+      if (!r || !r.classList.contains('open')) return;
+      if (r.contains(e.target) || e.target.closest('#rail-tab')) return;
+      setRail(false);
+    }, true);
+  }
+
+  /* ── 4: canvases must be re-fitted after a rotation ────────────────────── */
+  let refitting;
+  function refitCanvases() {
+    clearTimeout(refitting);
+    // Safari reports the old innerWidth for a beat after the rotation event.
+    refitting = setTimeout(() => {
+      ['zenRakeAttach', 'inkAttach', 'sketchAttach'].forEach((fn) => {
+        try { if (typeof window[fn] === 'function') window[fn](); } catch (e) { /* view not open */ }
+      });
+      document.querySelectorAll('canvas').forEach((c) => {
+        const b = c.getBoundingClientRect();
+        if (!b.width || !b.height) return;
+        const dpr = window.devicePixelRatio || 1;
+        const wantW = Math.round(b.width * dpr), wantH = Math.round(b.height * dpr);
+        // Only touch a canvas that is genuinely mis-sized: resizing clears it.
+        if (Math.abs(c.width - wantW) > 2 || Math.abs(c.height - wantH) > 2) {
+          if (typeof buildView === 'function' && currentView) buildView(currentView);
+        }
+      });
+    }, 260);
+  }
+  window.addEventListener('orientationchange', refitCanvases);
+  window.addEventListener('resize', refitCanvases);
+
+  // Above 1200 the rail is docked rather than a drawer, so the inline transform
+  // that drives the drawer has to be cleared — otherwise it stays translated
+  // off-screen and the rail simply vanishes on a desktop or a keyboard iPad,
+  // taking a horizontal scrollbar with it. A matchMedia listener is used rather
+  // than the resize event because rotating an iPad crosses this boundary
+  // without always firing resize first.
+  const docked = window.matchMedia('(min-width: 1200px)');
+  function syncRailMode() {
+    const r = document.getElementById('right-rail');
+    if (!r) return;
+    if (docked.matches) { r.style.transform = ''; r.classList.remove('open'); }
+    else if (!r.classList.contains('open')) { r.style.transform = 'translateX(100%)'; }
+    const t = document.getElementById('rail-tab');
+    if (t) t.classList.toggle('on', r.classList.contains('open'));
+  }
+  if (docked.addEventListener) docked.addEventListener('change', syncRailMode);
+  else docked.addListener(syncRailMode);            // older iPadOS Safari
+  window.addEventListener('resize', syncRailMode);
+  window.addEventListener('orientationchange', syncRailMode);
+  syncRailMode();
+
+  const css = document.createElement('style');
+  css.textContent = `
+/* Base first: at equal specificity the later rule wins, so the media
+   queries below must come after this, not before it. */
+#rail-tab {
+  position: fixed; right: 0; top: 50%; transform: translateY(-50%);
+  z-index: 9201; display: none; align-items: center; justify-content: center;
+  width: 30px; height: 74px; padding: 0;
+  border: 1px solid var(--rule2); border-right: none;
+  border-radius: 12px 0 0 12px;
+  background: var(--ink3); color: var(--gold-hi);
+  font-size: 15px; cursor: pointer;
+  box-shadow: -5px 0 16px rgba(0,0,0,.4);
+}
+#rail-tab.on { background: var(--cyan-lo); color: var(--cyan-hi); border-color: var(--cyan); }
+
+/* ── 1: iPad — the rail becomes a drawer instead of covering the page ────── */
+@media (max-width: 1199px) {
+  /* An off-canvas drawer sits beyond the right edge, which extends the
+     scrollable area and gives the whole page a horizontal scrollbar it should
+     not have. Standard off-canvas guard. */
+  html, body { overflow-x: hidden; max-width: 100%; }
+  #right-rail {
+    /* left must be forced: an earlier rule pins it at 629px, and with right:0
+       also set the element resolved 11px short of the edge — a sliver of rail
+       stayed on screen and the drawer never read as closed. */
+    position: fixed; top: 0; right: 0; left: auto !important; bottom: 0;
+    width: min(380px, 88vw); max-width: 88vw;
+    /* The closed position is set here; the open/closed transform is driven
+       inline from JS. The pre-existing sheet animates this same element with a
+       translateY drawer at max-width:1100px, and two rules competing for one
+       transform property resolved differently at different widths — the drawer
+       opened on iPad and refused on a phone. An inline style ends the argument. */
+    transform: translateX(100%);
+    transition: transform .3s cubic-bezier(.32,.72,0,1);
+    box-shadow: -18px 0 46px rgba(0,0,0,.55);
+    overflow-y: auto; z-index: 9200;
+    padding-top: max(18px, env(safe-area-inset-top));
+    padding-bottom: max(22px, env(safe-area-inset-bottom));
+    -webkit-overflow-scrolling: touch;
+  }
+  #right-rail.open { transform: translateX(0); }
+  #content-col, #main-wrap { padding-right: 0 !important; margin-right: 0 !important; }
+  #rail-drawer-handle { display: none !important; }
+  #rail-tab { display: flex; }
+}
+@media (min-width: 1200px) { #rail-tab { display: none; } }
+
+
+/* iPad portrait: the sidebar still fits, so it stays. Trimmed to give the
+   content back the width the rail used to take. */
+@media (min-width: 900px) and (max-width: 1199px) {
+  #sidebar { width: 214px; min-width: 214px; }
+  #content-col, #main-wrap { margin-left: 0; }
+}
+
+/* ── 2 + 3: touch. Applies by input type, not by screen width, so a Magic
+   Keyboard iPad in landscape still gets touch-sized controls. ───────────── */
+@media (pointer: coarse) {
+  /* 16px is the threshold below which Safari zooms on focus. */
+  input, textarea, select, .inp {
+    font-size: 16px !important;
+    max-width: 100%;
+  }
+  button, .btn, .nav-main, .nav-sub-item, .brain-tab,
+  .tab, .chip, .pill, #mobile-nav-toggle {
+    min-height: 44px;
+  }
+  button, .btn, .tab, .chip, .pill {
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .nav-main, .nav-sub-item, .brain-tab { display: flex; align-items: center; }
+  .brain-tab { flex-direction: column; justify-content: center; align-items: flex-start; }
+  /* Small glyph buttons — ✕, ↺, ⏭ — need width as well as height. */
+  button, .btn { min-width: 44px; }
+  /* Long-press on a control should not raise the iOS text-selection bubble. */
+  button, .btn, .nav-main, .nav-sub-item, .brain-tab, .tab, .chip, .pill {
+    -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
+  }
+  /* Drawing surfaces own their gestures, or a Pencil stroke scrolls the page. */
+  canvas { touch-action: none; }
+}
+
+/* ── phone ───────────────────────────────────────────────────────────────── */
+@media (max-width: 700px) {
+  #omni-input { font-size: 16px; padding: 14px 15px; }
+  #omni-hint { display: none; }              /* no ⌘ key to press */
+  #omni-row .btn { flex: 1; }
+  .brain-bar { gap: 4px; }
+  .brain-tab { padding: 8px 11px; font-size: 12px; }
+  .brain-tab small { display: none; }        /* the hint costs a whole row */
+  .nav-sec { padding: 12px 12px 4px; }
+  #right-rail { width: 100vw; max-width: 100vw; border-radius: 0; }
+  /* Reflective register stays reflective, but 62ch does not fit a phone. */
+  #view-journal, #view-tending { font-size: 16.5px; line-height: 1.85; }
+  #view-journal .card, #view-tending .tnd-card { padding: 20px 18px; }
+  /* Clear the home indicator so the last row is not half-swipeable. */
+  #views-root { padding-bottom: max(28px, env(safe-area-inset-bottom)); }
+}
+
+/* iPad split-view and Slide Over land here too. */
+@media (min-width: 701px) and (max-width: 899px) {
+  #sidebar { position: fixed; z-index: 9300; }
+  #mobile-nav-toggle { display: flex !important; }
+  #content-col, #main-wrap { margin-left: 0 !important; }
+}
+`;
+  document.head.appendChild(css);
+
+  // The mode bar can wrap to two rows on a phone; make sure the active tab is
+  // the one you can see.
+  const prevBuildForRail = buildView;
+  buildView = function () {
+    const out = prevBuildForRail.apply(this, arguments);
+    try { syncRailMode(); } catch (e) { /* rail not present */ }
+    return out;
+  };
+
+  const prevMount = brainMount;
+  brainMount = function (viewId) {
+    prevMount.apply(this, arguments);
+    const on = document.querySelector('#view-' + viewId + ' .brain-tab.on');
+    if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  };
+})();
+</script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   NOTIFICATION INBOX — showing up while the app is open
+
+   The badge counted `missed` only. Anything that fired while you were looking
+   at the app landed in "Delivered" and the bell stayed silent, so the only way
+   to discover it was to open the panel and look. Polling was every two minutes,
+   which meant even the badge lagged.
+
+   Now: the badge counts everything you have not seen, the page hears the push
+   directly from the service worker, and something arriving while you are here
+   raises a toast instead of hoping you notice a bell.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/** Everything delivered or missed since you last opened the panel. */
+function nbUnreadCount(rows) {
+  const seen = gd('nb.lastSeen', 0);
+  return rows.filter(r => {
+    const b = nbBucket(r);
+    if (b === 'pending') return false;                    // not yet due
+    return new Date(r.due_at).getTime() > seen;
+  }).length;
+}
+
+nbBadge = function (n) {
+  const b = document.getElementById('nb-badge');
+  if (!b) return;
+  b.textContent = n > 9 ? '9+' : String(n);
+  b.style.display = n ? 'flex' : 'none';
+  // A missed reminder is a different kind of news from a delivered one.
+  b.classList.toggle('nb-miss', !!(_nbRows || []).filter(r => nbBucket(r) === 'missed').length);
+};
+
+(function nbLive() {
+  const prevRender = nbRender;
+  nbRender = async function () {
+    const out = await prevRender.apply(this, arguments);
+    // Opening the panel is what marks things read.
+    sd('nb.lastSeen', Date.now());
+    nbBadge(0);
+    return out;
+  };
+
+  nbPoll = async function () {
+    if (_nbBusy || !authUserId) return;
+    _nbBusy = true;
+    try {
+      const rows = await nbFetch(true);
+      if (!_nbOpen) nbBadge(nbUnreadCount(rows));
+    } catch (e) { /* offline is not an error worth shouting about */ }
+    finally { _nbBusy = false; }
+  };
+
+  /* ── toast ───────────────────────────────────────────────────────────── */
+  const css = document.createElement('style');
+  css.textContent =
+'#nb-toast{position:fixed;left:50%;transform:translateX(-50%) translateY(-16px);' +
+ 'top:max(14px,env(safe-area-inset-top));z-index:9600;opacity:0;pointer-events:none;' +
+ 'transition:opacity .25s,transform .25s;max-width:min(420px,92vw)}' +
+'#nb-toast.show{opacity:1;transform:translateX(-50%) translateY(0);pointer-events:auto}' +
+'#nb-toast .card{background:var(--ink3);border:1px solid var(--gold);border-radius:12px;' +
+ 'padding:12px 15px;box-shadow:0 10px 34px rgba(0,0,0,.5);cursor:pointer}' +
+'#nb-toast .t{font-size:12.5px;color:var(--gold-hi);margin-bottom:3px}' +
+'#nb-toast .b{font-size:12.5px;color:var(--text2);line-height:1.5}' +
+'#nb-badge.nb-miss{background:var(--red)}';
+  document.head.appendChild(css);
+
+  let toastTimer;
+  function nbToast(title, body) {
+    let el = document.getElementById('nb-toast');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'nb-toast';
+      el.onclick = () => { el.classList.remove('show'); if (!_nbOpen) nbToggle(); };
+      document.body.appendChild(el);
+    }
+    el.innerHTML = '<div class="card"><div class="t">' + cnxEsc(title || 'Reminder') + '</div>' +
+                   '<div class="b">' + cnxEsc(body || '') + '</div></div>';
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 7000);
+  }
+  window.nbToast = nbToast;
+
+  // The service worker posts here the moment a push lands, so the inbox is
+  // current without waiting for the next poll.
+  if (navigator.serviceWorker) {
+    navigator.serviceWorker.addEventListener('message', (e) => {
+      if (!e.data || e.data.type !== 'cnx-push') return;
+      nbToast(e.data.title, e.data.body);
+      nbFetch(true).then(rows => { if (!_nbOpen) nbBadge(nbUnreadCount(rows)); });
+    });
+  }
+
+  // Coming back to the app is exactly when a stale badge is most obvious.
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) nbPoll(); });
+  window.addEventListener('focus', nbPoll);
+  setInterval(nbPoll, 30000);
+  setTimeout(nbPoll, 2500);
+})();
+</script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   ATTACHMENTS → SUPABASE STORAGE
+
+   Attachments were base64 data URLs inside the single JSON blob that syncs on
+   every save. A 5MB photo became ~6.7MB of base64 that rode along with every
+   subsequent write, and the quota banner made the eventual failure visible
+   without preventing it. This was the last structural weakness in the build.
+
+   Files now go to a private `attachments` bucket, one folder per user, with a
+   storage policy that refuses any path not starting with your own uid. What
+   stays in the blob is a path and some metadata — bytes, not megabytes.
+
+   Existing base64 attachments keep working and are migrated in the background,
+   oldest first, one at a time.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+const ATT_BUCKET = 'attachments';
+const ATT_MAX_BYTES = 25 * 1024 * 1024;      // the bucket's own limit
+
+function attIsImage(a) { return !!(a && a.type && a.type.indexOf('image/') === 0); }
+
+/** data: URL → Blob, without a network round-trip. */
+function attDataUrlToBlob(dataUrl) {
+  const [head, b64] = String(dataUrl).split(',');
+  const mime = (head.match(/data:([^;]+)/) || [, 'application/octet-stream'])[1];
+  const bin = atob(b64 || '');
+  const buf = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  return new Blob([buf], { type: mime });
+}
+
+/** Upload and return the stored path. Throws if not signed in. */
+async function attUpload(blob, name) {
+  if (!sbClient || !authUserId) throw new Error('not signed in');
+  const safe = String(name || 'file').replace(/[^\w.\-]+/g, '_').slice(-80);
+  const path = authUserId + '/' + Date.now() + '-' + Math.random().toString(36).slice(2, 8) + '-' + safe;
+  const { error } = await sbClient.storage.from(ATT_BUCKET)
+    .upload(path, blob, { contentType: blob.type || 'application/octet-stream', upsert: false });
+  if (error) throw new Error(error.message);
+  return path;
+}
+
+/* Signed URLs expire, so they are cached only for as long as they are valid. */
+const _attUrls = new Map();
+async function attUrl(a) {
+  if (!a) return null;
+  if (a.dataUrl) return a.dataUrl;                 // pre-Storage attachment
+  if (!a.path || !sbClient) return null;
+  const hit = _attUrls.get(a.path);
+  if (hit && hit.exp > Date.now()) return hit.url;
+  const { data, error } = await sbClient.storage.from(ATT_BUCKET)
+    .createSignedUrl(a.path, 3600);
+  if (error || !data) return null;
+  _attUrls.set(a.path, { url: data.signedUrl, exp: Date.now() + 3300 * 1000 });
+  return data.signedUrl;
+}
+
+/** Paint every <img data-att-path> once its signed URL arrives. */
+async function attHydrate(root) {
+  const els = (root || document).querySelectorAll('[data-att-path]:not([data-att-done])');
+  for (const el of els) {
+    el.setAttribute('data-att-done', '1');
+    const url = await attUrl({ path: el.getAttribute('data-att-path') });
+    if (!url) { el.replaceWith(Object.assign(document.createElement('span'),
+      { textContent: '📄', style: 'font-size:16px' })); continue; }
+    if (el.tagName === 'IMG') el.src = url; else el.href = url;
+  }
+}
+
+/** An <img> that fills in later, or a direct src for legacy attachments. */
+function attImgTag(a, style) {
+  if (!a) return '';
+  if (a.dataUrl) return '<img src="' + a.dataUrl + '" style="' + style + '">';
+  return '<img data-att-path="' + cnxEsc(a.path || '') + '" alt="' +
+         cnxEsc(a.name || '') + '" style="' + style + '">';
+}
+
+/* ── uploading happens at save time ──────────────────────────────────────── */
+async function attPromote(pending) {
+  // No account, no bucket: fall back to the old behaviour rather than losing
+  // the file. It will be migrated on the next sign-in.
+  if (!pending || !pending.dataUrl || !authUserId) return pending;
+  try {
+    const blob = attDataUrlToBlob(pending.dataUrl);
+    const path = await attUpload(blob, pending.name);
+    return { name: pending.name, type: pending.type, size: pending.size, path };
+  } catch (e) {
+    console.warn('attachment upload failed, keeping inline:', e.message);
+    return pending;
+  }
+}
+
+(function attWireSaves() {
+  if (typeof saveCapture === 'function') {
+    const prev = saveCapture;
+    saveCapture = async function () {
+      if (typeof _pendingAttachment !== 'undefined' && _pendingAttachment)
+        _pendingAttachment = await attPromote(_pendingAttachment);
+      return prev.apply(this, arguments);
+    };
+  }
+  if (typeof capSave === 'function') {
+    const prev = capSave;
+    capSave = async function () {
+      if (typeof _capPending !== 'undefined' && _capPending)
+        _capPending = await attPromote(_capPending);
+      return prev.apply(this, arguments);
+    };
+  }
+  // Both pickers rejected anything over 5MB. Storage takes 25.
+  try { window.MAX_ATTACHMENT_BYTES = ATT_MAX_BYTES; } catch (e) { /* const */ }
+})();
+
+/* ── render: hydrate after any view build ────────────────────────────────── */
+(function attWireRender() {
+  const prev = buildView;
+  buildView = function () {
+    const out = prev.apply(this, arguments);
+    setTimeout(() => attHydrate(document), 0);
+    return out;
+  };
+})();
+
+/* ── one-time migration of what is already in the blob ───────────────────── */
+async function attMigrate(limit) {
+  if (!sbClient || !authUserId) return { moved: 0, left: 0 };
+  const caps = gd('neurix.captures', []);
+  const pending = caps.filter(c => c.attachment && c.attachment.dataUrl);
+  let moved = 0;
+  for (const c of pending.slice(0, limit || 3)) {
+    try {
+      const a = c.attachment;
+      const path = await attUpload(attDataUrlToBlob(a.dataUrl), a.name);
+      c.attachment = { name: a.name, type: a.type, size: a.size, path };
+      moved++;
+    } catch (e) { console.warn('migrate:', e.message); break; }
+  }
+  if (moved) sd('neurix.captures', caps);
+  return { moved, left: pending.length - moved };
+}
+// Quietly, a few at a time, so a large backlog never blocks a page.
+setTimeout(function tick() {
+  if (!authUserId) return setTimeout(tick, 20000);
+  attMigrate(3).then(r => { if (r.left > 0) setTimeout(tick, 8000); });
+}, 12000);
 </script>
 
 </body>
