@@ -14230,14 +14230,66 @@ async function noteCopyLink(id, btn) {
   await deskCopy(noteDeepLink(id), btn);
 }
 
+/** Render a note as clean text for Apple Notes.
+ *
+ *  Taking innerText straight from the editor exported the labels in the shouty
+ *  case the CSS applies, carried the whole prompt after each dash, repeated the
+ *  title, and kept headings for fields left empty. Reading the structure and
+ *  rebuilding it gives Apple Notes something worth opening.
+ */
+function noteToAppleText(n) {
+  const L = [];
+  const doc = document.createElement('div');
+  doc.innerHTML = n.html || '';
+
+  const title = (n.title || 'Untitled').trim();
+  L.push(title);
+
+  // Metadata on one line rather than six.
+  const meta = [];
+  doc.querySelectorAll('.nt-block .nt-m').forEach((row) => {
+    const k = (row.querySelector('.nt-k') || {}).textContent || '';
+    const v = (row.querySelector('.nt-v') || {}).textContent || '';
+    if (v.trim() && v.trim() !== '—') meta.push(k.trim() + ': ' + v.trim());
+  });
+  if (meta.length) L.push(meta.join('   ·   '));
+  L.push('');
+
+  const fields = doc.querySelectorAll('.nt-f');
+  if (fields.length) {
+    fields.forEach((f) => {
+      // The label carries its prompt after an em dash; that is a training wheel
+      // for the editor, not something to preserve in an export.
+      const raw = ((f.querySelector('.nt-l') || {}).textContent || '').trim();
+      const label = raw.split('—')[0].trim();
+      const val = ((f.querySelector('.nt-b') || {}).innerText || '').trim();
+      if (!val) return;                       // an empty field is not worth a heading
+      L.push(label.toUpperCase());
+      L.push(val);
+      L.push('');
+    });
+    // Anything typed outside the template still belongs in the export.
+    const clone = doc.cloneNode(true);
+    clone.querySelectorAll('.nt-block, .nt-f').forEach((el) => el.remove());
+    const rest = (clone.innerText || '').trim();
+    if (rest) { L.push(rest); L.push(''); }
+  } else {
+    // Not a template note: send it as written, minus a repeated title.
+    let body = (n.text || '').trim();
+    if (body.startsWith(title)) body = body.slice(title.length).trim();
+    if (body) { L.push(body); L.push(''); }
+  }
+
+  L.push('— from CNX Master OS');
+  L.push(noteDeepLink(n.id));
+  return L.join('\n').replace(/\n{3,}/g, '\n\n');
+}
+
 /** Hand the note to a Shortcut, which creates it in Apple Notes. */
 function noteToApple(id, btn) {
   const n = noteById(id);
   if (!n) return;
-  const body =
-    (n.title || 'Untitled') + '\n\n' +
-    (n.text || '').trim() + '\n\n' +
-    '— from CNX Master OS\n' + noteDeepLink(id);
+  const body = noteToAppleText(n);
 
   if (!/iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent)) {
     alert('Apple Notes can only be reached from an iPhone, iPad or Mac.\n\n' +
@@ -14889,6 +14941,223 @@ const REMINDER_TEST_URL = 'https://hzpdbhufpceikcbqgpiv.functions.supabase.co/se
   setTimeout(wire, 2000);
   const prev = buildView;
   buildView = function () { const o = prev.apply(this, arguments); setTimeout(wire, 40); return o; };
+})();
+</script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   NOTE TEMPLATES
+
+   A note that starts blank gets written as prose and stays unstructured, which
+   is why the second brain fills with things that cannot be queried later. A
+   note that starts with fields gets the metadata captured while you still
+   remember it.
+
+   Date, category and tags are filled in from what the app already knows, so
+   the only fields you actually type are the ones only you can answer.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+const NOTE_TEMPLATES = {
+  // NEURIX — the house system. PARA organises where a note *lives*; the
+  // taxonomy already does that job here. This organises what a note *contains*,
+  // so it can still be answered from months later. Risk is a first-class field
+  // rather than an afterthought, because in this work the thing that matters
+  // is usually what could go wrong, and it is the field people skip.
+  neurix: {
+    label: 'NEURIX', hint: 'the full capture — for anything that matters',
+    fields: ['Name — what this is, in one line',
+             'Evidence — the raw material: quotes, numbers, screenshots',
+             'Understanding — so what? why does this matter?',
+             'Risk — what could go wrong, what is still uncertain',
+             'Intent — the next action, and by when',
+             'X-ref — people, documents, other notes this connects to'],
+  },
+  rix: {
+    label: 'RIX', hint: 'quick capture — three fields, thirty seconds',
+    fields: ['Raw — what happened',
+             'Intent — what I will do about it',
+             'X-ref — where this connects'],
+  },
+  cnx: {
+    label: 'CNX', hint: 'the standard capture',
+    fields: ['What?', 'Why?', 'Reminders', 'Note'],
+  },
+  meeting: {
+    label: 'Meeting', hint: 'who, decisions, actions',
+    fields: ['Attendees', 'Purpose', 'Decisions', 'Actions', 'Follow-up', 'Note'],
+  },
+  decision: {
+    label: 'Decision', hint: 'so future-you knows why',
+    fields: ['Decision', 'Why?', 'Alternatives considered', 'Revisit when', 'Note'],
+  },
+  idea: {
+    label: 'Idea', hint: 'quick, with a next step',
+    fields: ['Idea', 'Why it matters', 'Next step', 'Note'],
+  },
+};
+
+function noteTemplateHtml(kind, note) {
+  const t = NOTE_TEMPLATES[kind] || NOTE_TEMPLATES.cnx;
+  const d = new Date();
+  const date = d.toLocaleDateString([], { weekday:'long', day:'numeric', month:'long', year:'numeric' });
+  const cat = note && note.cat && typeof taxLabel === 'function' ? taxLabel(note.cat) : '—';
+  const tags = note && note.tags && note.tags.length ? note.tags.join(', ') : '—';
+
+  const meta = (k, v) =>
+    '<div class="nt-m"><span class="nt-k">' + k + '</span>' +
+    '<span class="nt-v">' + cnxEsc(v) + '</span></div>';
+
+  // Metadata the app can answer is filled in; the rest is left to you.
+  return '<div class="nt-block">' +
+    meta('Date', date) + meta('Category', cat) + meta('Tags', tags) +
+    '</div>' +
+    t.fields.map(f =>
+      '<div class="nt-f"><div class="nt-l">' + cnxEsc(f) + '</div>' +
+      '<div class="nt-b"><br></div></div>').join('') +
+    '<div><br></div>';
+}
+
+/** Insert a template into the open note, at the top. */
+function noteInsertTemplate(kind) {
+  const body = document.getElementById('note-body');
+  if (!body || !_noteSel) return;
+  const n = noteById(_noteSel);
+  const html = noteTemplateHtml(kind, n);
+
+  // If what is already there is an untouched template — every field still
+  // empty — replace it rather than stacking a second one on top. Choosing
+  // Meeting on a fresh note should give you a meeting note, not both.
+  const existing = body.querySelector('.nt-block');
+  const untouched = existing &&
+    [...body.querySelectorAll('.nt-b')].every(el => !(el.innerText || '').trim()) &&
+    !(body.innerText || '').replace(/\s+/g, '').length ||
+    (existing && [...body.querySelectorAll('.nt-b')].every(el => !(el.innerText || '').trim()));
+
+  body.innerHTML = untouched ? html : html + (body.innerHTML || '');
+  noteQueueSave();
+  noteTemplateMenuClose();
+  // Put the caret in the first empty field, so you can start typing at once.
+  const first = body.querySelector('.nt-b');
+  if (first) {
+    const r = document.createRange(), sel = window.getSelection();
+    r.selectNodeContents(first); r.collapse(true);
+    sel.removeAllRanges(); sel.addRange(r);
+    body.focus();
+  }
+}
+
+/* ── /template as you type ───────────────────────────────────────────────── */
+(function slashCommands() {
+  const TRIGGERS = { '/neurix': 'neurix', '/n': 'neurix',
+                     '/rix': 'rix', '/r': 'rix',
+                     '/template': 'cnx', '/t': 'cnx', '/meeting': 'meeting',
+                     '/decision': 'decision', '/idea': 'idea' };
+
+  document.addEventListener('input', (e) => {
+    const body = e.target;
+    if (!body || body.id !== 'note-body') return;
+    const sel = window.getSelection();
+    if (!sel.rangeCount) return;
+    const node = sel.anchorNode;
+    if (!node || node.nodeType !== 3) return;             // text nodes only
+    const text = node.textContent || '';
+    const upto = text.slice(0, sel.anchorOffset);
+
+    for (const trig of Object.keys(TRIGGERS)) {
+      // Require the trigger to end the typed run, so /template does not fire
+      // while you are still typing /templates.
+      if (!upto.endsWith(trig)) continue;
+      const before = upto.slice(0, upto.length - trig.length);
+      if (before && !/\s$/.test(before)) continue;        // must start a word
+      node.textContent = before + text.slice(sel.anchorOffset);
+      noteInsertTemplate(TRIGGERS[trig]);
+      return;
+    }
+  });
+})();
+
+/* ── picker ──────────────────────────────────────────────────────────────── */
+function noteTemplateMenu() {
+  let w = document.getElementById('nt-menu');
+  if (!w) { w = document.createElement('div'); w.id = 'nt-menu'; document.body.appendChild(w); }
+  w.innerHTML = '<div class="nt-card"><div class="nt-h">Insert a template</div>' +
+    Object.keys(NOTE_TEMPLATES).map(k =>
+      '<button class="nt-opt" onclick="noteInsertTemplate(\'' + k + '\')">' +
+      '<b>' + cnxEsc(NOTE_TEMPLATES[k].label) + '</b>' +
+      '<small>' + cnxEsc(NOTE_TEMPLATES[k].hint) + '</small>' +
+      '<code>/' + (k === 'cnx' ? 'template' : k) + '</code></button>').join('') +
+    '<div class="nt-note">Long field names are prompts, not labels — delete the ' +
+      'dash and what follows once you know them by heart.</div>' +
+    '<div class="nt-note">Type <code>/template</code> in a note to insert without opening this.</div>' +
+    '<button class="nt-opt nt-close" onclick="noteTemplateMenuClose()">Close</button></div>';
+  w.classList.add('open');
+}
+function noteTemplateMenuClose() {
+  const w = document.getElementById('nt-menu'); if (w) w.classList.remove('open');
+}
+
+/* ── new notes start structured ──────────────────────────────────────────── */
+(function newNoteTemplate() {
+  const prev = noteNew;
+  noteNew = function () {
+    const out = prev.apply(this, arguments);
+    if (!gd('notes.autoTemplate', true)) return out;
+    setTimeout(() => {
+      const body = document.getElementById('note-body');
+      if (body && !(body.innerHTML || '').trim()) noteInsertTemplate(gd('notes.defaultTemplate', 'neurix'));
+      const t = document.getElementById('note-title');
+      if (t) t.focus();
+    }, 120);
+    return out;
+  };
+})();
+
+/* ── toolbar button ──────────────────────────────────────────────────────── */
+(function templateWire() {
+  const prev = buildNotes;
+  buildNotes = function () {
+    const out = prev.apply(this, arguments);
+    const tools = document.querySelector('#note-editor .note-tools');
+    if (tools && !document.getElementById('nt-btn')) {
+      const b = document.createElement('button');
+      b.id = 'nt-btn'; b.title = 'Insert template  (/template)';
+      b.textContent = '▤';
+      b.onclick = noteTemplateMenu;
+      const sep = tools.querySelector('.sep');
+      tools.insertBefore(b, sep || tools.firstChild);
+    }
+    return out;
+  };
+
+  const css = document.createElement('style');
+  css.textContent =
+'.nt-block{background:var(--ink4);border-left:2px solid var(--cyan);border-radius:0 8px 8px 0;' +
+ 'padding:9px 12px;margin:0 0 12px}' +
+'.nt-m{display:flex;gap:10px;padding:2px 0;font-size:12px}' +
+'.nt-k{font-family:var(--font-mono);font-size:9px;letter-spacing:1.2px;text-transform:uppercase;' +
+ 'color:var(--text3);min-width:66px;padding-top:2px}' +
+'.nt-v{color:var(--text2)}' +
+'.nt-f{margin-bottom:10px}' +
+'.nt-l{font-family:var(--font-mono);font-size:9.5px;letter-spacing:1.4px;text-transform:uppercase;' +
+ 'color:var(--gold);margin-bottom:3px}' +
+'.nt-b{min-height:1.5em;padding-left:2px;border-left:1px solid var(--rule);padding-left:9px}' +
+'#nt-menu{position:fixed;inset:0;z-index:9600;display:none;align-items:center;justify-content:center;' +
+ 'background:rgba(0,0,0,.55);padding:20px}' +
+'#nt-menu.open{display:flex}' +
+'.nt-card{background:var(--ink3);border:1px solid var(--rule2);border-radius:14px;padding:16px;' +
+ 'width:min(360px,92vw)}' +
+'.nt-h{font-family:var(--font-display);font-size:17px;color:var(--text);margin-bottom:12px}' +
+'.nt-opt{display:flex;align-items:center;gap:8px;width:100%;text-align:left;background:var(--ink4);' +
+ 'border:1px solid var(--rule);border-radius:9px;padding:10px 12px;margin-bottom:6px;cursor:pointer}' +
+'.nt-opt:hover{border-color:var(--gold)}' +
+'.nt-opt b{font-weight:500;font-size:13px;color:var(--text2)}' +
+'.nt-opt small{flex:1;font-size:11px;color:var(--text3)}' +
+'.nt-opt code{font-family:var(--font-mono);font-size:9.5px;color:var(--cyan-hi);background:var(--ink);' +
+ 'padding:2px 6px;border-radius:4px}' +
+'.nt-note{font-size:11px;color:var(--text3);margin:8px 0;line-height:1.6}' +
+'.nt-note code{font-family:var(--font-mono);color:var(--cyan-hi)}' +
+'.nt-close{justify-content:center;color:var(--text3);background:transparent}';
+  document.head.appendChild(css);
 })();
 </script>
 
