@@ -15074,6 +15074,7 @@ const NOTE_TEMPLATES = {
     label: 'CNX', hint: 'the standard capture',
     fields: ['What?', 'Why?', 'Reminders', 'Note'],
   },
+  none: { label: 'Blank', hint: 'no structure — just write', fields: [] },
   meeting: {
     label: 'Meeting', hint: 'who, decisions, actions',
     fields: ['Attendees', 'Purpose', 'Decisions', 'Actions', 'Follow-up', 'Note'],
@@ -15114,6 +15115,15 @@ function noteInsertTemplate(kind) {
   const body = document.getElementById('note-body');
   if (!body || !_noteSel) return;
   const n = noteById(_noteSel);
+  if (kind === 'none') {
+    // Only strip an untouched frame; anything written stays.
+    const untouched = body.querySelector('.nt-block') &&
+      [...body.querySelectorAll('.nt-b')].every(el => !ntText(el));
+    if (untouched) { body.innerHTML = '<div><br></div>'; noteQueueSave(); }
+    noteTemplateMenuClose();
+    body.focus();
+    return;
+  }
   const html = noteTemplateHtml(kind, n);
 
   // If what is already there is an untouched template — every field still
@@ -15180,9 +15190,23 @@ function noteTemplateMenu() {
       '<code>/' + (k === 'cnx' ? 'template' : k) + '</code></button>').join('') +
     '<div class="nt-note">Long field names are prompts, not labels — delete the ' +
       'dash and what follows once you know them by heart.</div>' +
+    '<div class="nt-l2">New notes start with</div>' +
+    '<div class="nt-defrow">' +
+      Object.keys(NOTE_TEMPLATES).map(k =>
+        '<button class="nt-def' + (gd('notes.defaultTemplate','neurix') === k ? ' on' : '') +
+        '" onclick="noteSetDefaultTemplate(\'' + k + '\')">' +
+        cnxEsc(NOTE_TEMPLATES[k].label) + '</button>').join('') +
+    '</div>' +
     '<div class="nt-note">Type <code>/template</code> in a note to insert without opening this.</div>' +
     '<button class="nt-opt nt-close" onclick="noteTemplateMenuClose()">Close</button></div>';
   w.classList.add('open');
+}
+/** Choose what a new note opens with. Blank means no template at all. */
+function noteSetDefaultTemplate(kind) {
+  sd('notes.defaultTemplate', kind);
+  sd('notes.autoTemplate', kind !== 'none');
+  document.querySelectorAll('#nt-menu .nt-def').forEach(b =>
+    b.classList.toggle('on', b.textContent.trim() === (NOTE_TEMPLATES[kind] || {}).label));
 }
 function noteTemplateMenuClose() {
   const w = document.getElementById('nt-menu'); if (w) w.classList.remove('open');
@@ -15248,7 +15272,13 @@ function noteTemplateMenuClose() {
  'padding:2px 6px;border-radius:4px}' +
 '.nt-note{font-size:11px;color:var(--text3);margin:8px 0;line-height:1.6}' +
 '.nt-note code{font-family:var(--font-mono);color:var(--cyan-hi)}' +
-'.nt-close{justify-content:center;color:var(--text3);background:transparent}';
+'.nt-close{justify-content:center;color:var(--text3);background:transparent}' +
+'.nt-l2{font-family:var(--font-mono);font-size:8.5px;letter-spacing:1.5px;text-transform:uppercase;' +
+ 'color:var(--text3);margin:12px 0 6px}' +
+'.nt-defrow{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px}' +
+'.nt-def{padding:6px 11px;font-size:11.5px;border-radius:7px;border:1px solid var(--rule);' +
+ 'background:var(--ink4);color:var(--text3);cursor:pointer}' +
+'.nt-def.on{border-color:var(--cyan);color:var(--cyan-hi);background:var(--cyan-lo)}';
   document.head.appendChild(css);
 })();
 </script>
