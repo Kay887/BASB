@@ -14292,6 +14292,20 @@ function noteExportPreview(id) {
  *  title, and kept headings for fields left empty. Reading the structure and
  *  rebuilding it gives Apple Notes something worth opening.
  */
+/** Text from a node that may not be in the document.
+ *  Block elements and <br> become newlines by hand, because textContent runs
+ *  everything together and innerText is unavailable off-document in Safari. */
+function ntText(el) {
+  if (!el) return '';
+  const clone = el.cloneNode(true);
+  clone.querySelectorAll('br').forEach((br) => br.replaceWith('\n'));
+  clone.querySelectorAll('div,p,li,tr').forEach((b) => b.append('\n'));
+  return (clone.textContent || '')
+    .replace(/\u00a0/g, ' ')
+    .split('\n').map((x) => x.trim()).filter((x, i, a) => x || (i && a[i - 1]))
+    .join('\n').trim();
+}
+
 function noteToAppleText(n) {
   const L = [];
   const doc = document.createElement('div');
@@ -14317,7 +14331,12 @@ function noteToAppleText(n) {
       // for the editor, not something to preserve in an export.
       const raw = ((f.querySelector('.nt-l') || {}).textContent || '').trim();
       const label = raw.split('—')[0].trim();
-      const val = ((f.querySelector('.nt-b') || {}).innerText || '').trim();
+      // textContent, not innerText: this tree is detached from the document, and
+      // Safari returns an empty string for innerText on unrendered nodes since
+      // it needs layout to compute one. Chromium answers anyway, which is why
+      // this passed in testing and failed on the device — every field read as
+      // empty and was skipped, leaving only the title and the footer.
+      const val = ntText(f.querySelector('.nt-b'));
       if (!val) return;                       // an empty field is not worth a heading
       L.push(label.toUpperCase());
       L.push(val);
@@ -14326,7 +14345,7 @@ function noteToAppleText(n) {
     // Anything typed outside the template still belongs in the export.
     const clone = doc.cloneNode(true);
     clone.querySelectorAll('.nt-block, .nt-f').forEach((el) => el.remove());
-    const rest = (clone.innerText || '').trim();
+    const rest = ntText(clone);
     if (rest) { L.push(rest); L.push(''); }
   } else {
     // Not a template note: send it as written, minus a repeated title.
