@@ -14200,6 +14200,7 @@ function noteRowMenu(id, ev) {
       '</div>' +
       '<div class="nrm-l" style="margin-top:10px">Actions</div>' +
       '<button class="nrm-b" onclick="noteToApple(\'' + id + '\',this)">📝 Send to Apple Notes</button>' +
+      '<button class="nrm-b" onclick="noteExportPreview(\'' + id + '\')">👁 Preview what gets sent</button>' +
       '<button class="nrm-b" onclick="noteCopyLink(\'' + id + '\',this)">🔗 Copy link to this note</button>' +
       (n.trashed
         ? '<button class="nrm-b" onclick="noteRowAct(\'restore\',\'' + id + '\')">↩ Restore</button>' +
@@ -14229,6 +14230,60 @@ function noteDeepLink(id) {
 async function noteCopyLink(id, btn) {
   await deskCopy(noteDeepLink(id), btn);
 }
+
+/** Show the exact text the Shortcut will receive.
+ *
+ *  When an export looks wrong there are two possible culprits — what this app
+ *  produces, and what the Shortcut does with it — and no way to tell them apart
+ *  from the far end. This shows the first half exactly, so the other half can
+ *  be judged against it. */
+function noteExportPreview(id) {
+  try { if (_noteSel === id && typeof noteFlush === 'function') noteFlush(); } catch (e) {}
+  const n = noteById(id);
+  if (!n) return;
+  const text = noteToAppleText(n);
+  noteRowMenuClose();
+  let w = document.getElementById('nx-preview');
+  if (!w) { w = document.createElement('div'); w.id = 'nx-preview'; document.body.appendChild(w); }
+  w.innerHTML =
+    '<div class="nxp-card">' +
+      '<div class="nxp-h">What gets sent</div>' +
+      '<div class="nxp-meta">' + text.length + ' characters · ' +
+        text.split('\n').filter(Boolean).length + ' lines</div>' +
+      '<pre class="nxp-body">' + cnxEsc(text) + '</pre>' +
+      '<div class="nxp-acts">' +
+        '<button class="btn btn-gold" onclick="deskCopy(' +
+          JSON.stringify(text).replace(/"/g, '&quot;') + ',this)">Copy</button>' +
+        '<button class="btn" onclick="noteToApple(\'' + id + '\')">Send anyway</button>' +
+        '<button class="btn" onclick="document.getElementById(\'nx-preview\').classList.remove(\'open\')">Close</button>' +
+      '</div>' +
+      '<div class="nxp-note">If this looks right but Apple Notes shows only a ' +
+        'title, the Shortcut is the problem, not the note — check that Create ' +
+        'Note\'s body is wired to the Text action\'s output. Apple Notes also ' +
+        'uses the first line as the note title, so open the note rather than ' +
+        'judging it from the list.</div>' +
+    '</div>';
+  w.classList.add('open');
+}
+
+(function previewStyles() {
+  const css = document.createElement('style');
+  css.textContent =
+'#nx-preview{position:fixed;inset:0;z-index:9650;display:none;align-items:center;' +
+ 'justify-content:center;background:rgba(0,0,0,.6);padding:18px}' +
+'#nx-preview.open{display:flex}' +
+'.nxp-card{background:var(--ink3);border:1px solid var(--rule2);border-radius:14px;padding:16px;' +
+ 'width:min(460px,94vw);max-height:88vh;display:flex;flex-direction:column}' +
+'.nxp-h{font-family:var(--font-display);font-size:17px;color:var(--text)}' +
+'.nxp-meta{font-family:var(--font-mono);font-size:9.5px;color:var(--text3);margin:4px 0 10px}' +
+'.nxp-body{flex:1;overflow:auto;background:var(--ink);border:1px solid var(--rule);' +
+ 'border-radius:9px;padding:12px;font-family:var(--font-mono);font-size:11px;line-height:1.65;' +
+ 'color:var(--text2);white-space:pre-wrap;word-break:break-word;margin:0}' +
+'.nxp-acts{display:flex;gap:6px;margin-top:12px;flex-wrap:wrap}' +
+'.nxp-acts .btn{padding:7px 12px;font-size:11.5px;min-height:0}' +
+'.nxp-note{font-size:11px;color:var(--text3);line-height:1.6;margin-top:10px}';
+  document.head.appendChild(css);
+})();
 
 /** Render a note as clean text for Apple Notes.
  *
