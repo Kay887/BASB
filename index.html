@@ -15182,7 +15182,8 @@ function noteInsertTemplate(kind) {
 function noteTemplateMenu() {
   let w = document.getElementById('nt-menu');
   if (!w) { w = document.createElement('div'); w.id = 'nt-menu'; document.body.appendChild(w); }
-  w.innerHTML = '<div class="nt-card"><div class="nt-h">Insert a template</div>' +
+  w.innerHTML = '<div class="nt-card"><div class="nt-h">Templates</div>' +
+    '<div class="nt-l2" style="margin-top:0">Insert into this note now</div>' +
     Object.keys(NOTE_TEMPLATES).map(k =>
       '<button class="nt-opt" onclick="noteInsertTemplate(\'' + k + '\')">' +
       '<b>' + cnxEsc(NOTE_TEMPLATES[k].label) + '</b>' +
@@ -15190,7 +15191,8 @@ function noteTemplateMenu() {
       '<code>/' + (k === 'cnx' ? 'template' : k) + '</code></button>').join('') +
     '<div class="nt-note">Long field names are prompts, not labels — delete the ' +
       'dash and what follows once you know them by heart.</div>' +
-    '<div class="nt-l2">New notes start with</div>' +
+    '<div class="nt-sep"></div>' +
+    '<div class="nt-l2">Every new note should start with</div>' +
     '<div class="nt-defrow">' +
       Object.keys(NOTE_TEMPLATES).map(k =>
         '<button class="nt-def' + (gd('notes.defaultTemplate','neurix') === k ? ' on' : '') +
@@ -15198,6 +15200,7 @@ function noteTemplateMenu() {
         cnxEsc(NOTE_TEMPLATES[k].label) + '</button>').join('') +
     '</div>' +
     '<div class="nt-note">Type <code>/template</code> in a note to insert without opening this.</div>' +
+    '<div id="nt-confirm" class="nt-confirm"></div>' +
     '<button class="nt-opt nt-close" onclick="noteTemplateMenuClose()">Close</button></div>';
   w.classList.add('open');
 }
@@ -15207,6 +15210,15 @@ function noteSetDefaultTemplate(kind) {
   sd('notes.autoTemplate', kind !== 'none');
   document.querySelectorAll('#nt-menu .nt-def').forEach(b =>
     b.classList.toggle('on', b.textContent.trim() === (NOTE_TEMPLATES[kind] || {}).label));
+  // Say what changed. The two rows of buttons look alike, and a tap that only
+  // moves a highlight is easy to mistake for one that did nothing.
+  const note = document.getElementById('nt-confirm');
+  if (note) {
+    const lbl = (NOTE_TEMPLATES[kind] || {}).label || kind;
+    note.textContent = kind === 'none'
+      ? '✓ New notes will start blank.'
+      : '✓ New notes will start with ' + lbl + '.';
+  }
 }
 function noteTemplateMenuClose() {
   const w = document.getElementById('nt-menu'); if (w) w.classList.remove('open');
@@ -15278,7 +15290,9 @@ function noteTemplateMenuClose() {
 '.nt-defrow{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:10px}' +
 '.nt-def{padding:6px 11px;font-size:11.5px;border-radius:7px;border:1px solid var(--rule);' +
  'background:var(--ink4);color:var(--text3);cursor:pointer}' +
-'.nt-def.on{border-color:var(--cyan);color:var(--cyan-hi);background:var(--cyan-lo)}';
+'.nt-def.on{border-color:var(--cyan);color:var(--cyan-hi);background:var(--cyan-lo)}' +
+'.nt-sep{height:1px;background:var(--rule);margin:14px -16px 0}' +
+'.nt-confirm{font-family:var(--font-mono);font-size:10px;color:var(--green);min-height:14px;margin-bottom:8px}';
   document.head.appendChild(css);
 })();
 </script>
