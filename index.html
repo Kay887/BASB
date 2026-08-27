@@ -14337,9 +14337,11 @@ function noteToAppleText(n) {
       // this passed in testing and failed on the device — every field read as
       // empty and was skipped, leaving only the title and the footer.
       const val = ntText(f.querySelector('.nt-b'));
-      if (!val) return;                       // an empty field is not worth a heading
+      // The heading is kept even when the field is empty. Dropping them made a
+      // fresh note export as a title and a footer, and lost the point: the
+      // structure is meant to travel, so it can be filled in on either side.
       L.push(label.toUpperCase());
-      L.push(val);
+      if (val) L.push(val);
       L.push('');
     });
     // Anything typed outside the template still belongs in the export.
@@ -14372,6 +14374,8 @@ function noteToApple(id, btn) {
   const body = noteToAppleText(n);
 
   // An export with no content is worse than none: it looks like it worked.
+  // A template with nothing filled in still counts as content — the skeleton is
+  // useful in Apple Notes — so only a truly bare note is refused.
   const hasContent = (n.text || '').trim().length > 0 || (n.html || '').trim().length > 0;
   if (!hasContent) {
     alert('This note is empty, so there is nothing to send.\n\n' +
