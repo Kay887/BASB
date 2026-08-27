@@ -14138,5 +14138,510 @@ const MED_GROUP_ORDER = ['Chants', 'Instrumental', 'Nature', 'Generated'];
 })();
 </script>
 
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   NOTES — per-row actions, and a bridge to Apple Notes
+
+   Delete and Move existed but only inside the open editor, so acting on a note
+   meant opening it first. They are now on each row, revealed on hover or on a
+   long-press by touch, which keeps the list quiet until you reach for it.
+
+   The Apple Notes bridge is a Shortcut, because Apple publishes no web API for
+   Notes — nothing in a browser can read or write them. What a browser *can* do
+   is hand a Shortcut some text, and a Shortcut can create a note. The text
+   carries a link back to this note, so the two stay findable from each other.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+const APPLE_NOTES_SHORTCUT = 'CNX to Notes';
+
+/* ── per-row delete and move ─────────────────────────────────────────────── */
+function noteRowMenu(id, ev) {
+  if (ev) { ev.stopPropagation(); ev.preventDefault(); }
+  const n = noteById(id);
+  if (!n) return;
+  // Notes file into the shared taxonomy, not free-text folders: noteFolders()
+  // deliberately returns nothing and noteMoveTo sets `cat`, so that Notes and
+  // Memory Dump agree on one filing system. Offering folders here would have
+  // presented a concept the rest of the app retired.
+  const wrap = document.getElementById('note-row-menu') || (() => {
+    const d = document.createElement('div');
+    d.id = 'note-row-menu';
+    document.body.appendChild(d);
+    return d;
+  })();
+  wrap.innerHTML =
+    '<div class="nrm-card">' +
+      '<div class="nrm-h">' + cnxEsc(n.title || 'Untitled') + '</div>' +
+      '<div class="nrm-l">File under</div>' +
+      '<div class="nrm-tax">' +
+        (n.cat ? '<button class="nrm-b nrm-clear" onclick="noteRowMove(\'' + id + '\',\'\')">' +
+                 '✕ Unfile</button>' : '') +
+        CNX_TAXONOMY.map(g =>
+          '<div class="nrm-g">' + cnxEsc(g.icon || '') + ' ' + cnxEsc(g.label) + '</div>' +
+          [{ id: g.id, label: 'General' }].concat(g.children || []).map(c =>
+            '<button class="nrm-b nrm-c' + (n.cat === c.id ? ' on' : '') +
+            '" onclick="noteRowMove(\'' + id + '\',\'' + c.id + '\')">' +
+            cnxEsc(c.label) + '</button>').join('')
+        ).join('') +
+      '</div>' +
+      '<div class="nrm-l" style="margin-top:10px">Actions</div>' +
+      '<button class="nrm-b" onclick="noteToApple(\'' + id + '\',this)">📝 Send to Apple Notes</button>' +
+      '<button class="nrm-b" onclick="noteCopyLink(\'' + id + '\',this)">🔗 Copy link to this note</button>' +
+      (n.trashed
+        ? '<button class="nrm-b" onclick="noteRowAct(\'restore\',\'' + id + '\')">↩ Restore</button>' +
+          '<button class="nrm-b nrm-danger" onclick="noteRowAct(\'destroy\',\'' + id + '\')">Delete permanently</button>'
+        : '<button class="nrm-b nrm-danger" onclick="noteRowAct(\'trash\',\'' + id + '\')">🗑 Move to trash</button>') +
+      '<button class="nrm-b nrm-close" onclick="noteRowMenuClose()">Close</button>' +
+    '</div>';
+  wrap.classList.add('open');
+}
+function noteRowMenuClose() {
+  const w = document.getElementById('note-row-menu');
+  if (w) w.classList.remove('open');
+}
+function noteRowMove(id, folder) { noteMoveTo(id, folder); noteRowMenuClose(); }
+function noteRowAct(what, id) {
+  noteRowMenuClose();
+  if (what === 'trash') noteTrash(id);
+  else if (what === 'restore') noteRestore(id);
+  else if (what === 'destroy') noteDestroy(id);
+}
+
+/* ── Apple Notes bridge ──────────────────────────────────────────────────── */
+function noteDeepLink(id) {
+  return location.origin + location.pathname + '#note=' + encodeURIComponent(id);
+}
+
+async function noteCopyLink(id, btn) {
+  await deskCopy(noteDeepLink(id), btn);
+}
+
+/** Hand the note to a Shortcut, which creates it in Apple Notes. */
+function noteToApple(id, btn) {
+  const n = noteById(id);
+  if (!n) return;
+  const body =
+    (n.title || 'Untitled') + '\n\n' +
+    (n.text || '').trim() + '\n\n' +
+    '— from CNX Master OS\n' + noteDeepLink(id);
+
+  if (!/iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent)) {
+    alert('Apple Notes can only be reached from an iPhone, iPad or Mac.\n\n' +
+          'The note text has been copied instead.');
+    deskCopy(body, btn);
+    return;
+  }
+  // Record the attempt so the note shows it has a counterpart over there.
+  notePatch(id, { appleSentAt: Date.now() });
+  const url = 'shortcuts://run-shortcut?name=' + encodeURIComponent(APPLE_NOTES_SHORTCUT) +
+              '&input=text&text=' + encodeURIComponent(body);
+  window.location.href = url;
+  noteRowMenuClose();
+  setTimeout(buildNotes, 400);
+}
+
+/* ── deep link: opening a /#note=... URL selects that note ───────────────── */
+(function noteDeepLinkOpen() {
+  function apply() {
+    const m = /[#&]note=([^&]+)/.exec(location.hash || '');
+    if (!m) return;
+    const id = decodeURIComponent(m[1]);
+    if (!noteById(id)) return;
+    switchView('notes');
+    setTimeout(() => { noteSelect(id); }, 120);
+  }
+  window.addEventListener('hashchange', apply);
+  setTimeout(apply, 1800);
+})();
+
+/* ── wire the rows ───────────────────────────────────────────────────────── */
+(function noteRowsWire() {
+  const prevList = noteRenderList;
+  noteRenderList = function () {
+    const out = prevList.apply(this, arguments);
+    const el = document.getElementById('note-list');
+    if (!el) return out;
+    el.querySelectorAll('.note-row').forEach((row) => {
+      const oc = row.getAttribute('onclick') || '';
+      const m = /noteSelect\('([^']+)'\)/.exec(oc);
+      if (!m || row.querySelector('.nr-acts')) return;
+      const id = m[1];
+      const n = noteById(id);
+      const acts = document.createElement('div');
+      acts.className = 'nr-acts';
+      acts.innerHTML =
+        '<button title="Move to folder" onclick="event.stopPropagation();noteRowMenu(\'' + id + '\',event)">⋯</button>' +
+        (n && n.trashed
+          ? '<button title="Restore" onclick="event.stopPropagation();noteRowAct(\'restore\',\'' + id + '\')">↩</button>'
+          : '<button title="Move to trash" onclick="event.stopPropagation();noteRowAct(\'trash\',\'' + id + '\')">🗑</button>');
+      row.appendChild(acts);
+      if (n && n.appleSentAt) {
+        const b = document.createElement('span');
+        b.className = 'nr-apple';
+        b.title = 'Sent to Apple Notes ' + new Date(n.appleSentAt).toLocaleDateString();
+        b.textContent = '📝';
+        row.appendChild(b);
+      }
+      // Touch has no hover, so a long press opens the same menu.
+      let t;
+      row.addEventListener('touchstart', () => { t = setTimeout(() => noteRowMenu(id), 550); }, { passive: true });
+      ['touchend', 'touchmove', 'touchcancel'].forEach(e =>
+        row.addEventListener(e, () => clearTimeout(t), { passive: true }));
+    });
+    return out;
+  };
+
+  document.addEventListener('click', (e) => {
+    const w = document.getElementById('note-row-menu');
+    if (w && w.classList.contains('open') && !e.target.closest('.nrm-card') &&
+        !e.target.closest('.nr-acts')) noteRowMenuClose();
+  });
+
+  const css = document.createElement('style');
+  css.textContent =
+'.note-row{position:relative}' +
+'.nr-acts{position:absolute;top:7px;right:7px;display:flex;gap:3px;opacity:0;transition:opacity .15s}' +
+'.note-row:hover .nr-acts,.note-row.sel .nr-acts{opacity:1}' +
+'@media(pointer:coarse){.nr-acts{opacity:1}}' +
+'.nr-acts button{background:var(--ink);border:1px solid var(--rule2);color:var(--text3);' +
+ 'border-radius:6px;width:26px;height:26px;font-size:12px;cursor:pointer;padding:0;' +
+ 'display:flex;align-items:center;justify-content:center}' +
+'.nr-acts button:hover{color:var(--text);border-color:var(--gold)}' +
+'.nr-apple{position:absolute;bottom:8px;right:9px;font-size:10px;opacity:.65}' +
+'#note-row-menu{position:fixed;inset:0;z-index:9500;display:none;align-items:center;' +
+ 'justify-content:center;background:rgba(0,0,0,.55);padding:20px}' +
+'#note-row-menu.open{display:flex}' +
+'.nrm-card{background:var(--ink3);border:1px solid var(--rule2);border-radius:14px;' +
+ 'padding:16px 16px 12px;width:min(340px,92vw);max-height:80vh;overflow-y:auto;' +
+ 'box-shadow:0 20px 50px rgba(0,0,0,.55)}' +
+'.nrm-h{font-size:14px;color:var(--text);margin-bottom:12px;overflow:hidden;' +
+ 'text-overflow:ellipsis;white-space:nowrap}' +
+'.nrm-l{font-family:var(--font-mono);font-size:8.5px;letter-spacing:1.5px;text-transform:uppercase;' +
+ 'color:var(--text3);margin:6px 0 6px}' +
+'.nrm-b{display:block;width:100%;text-align:left;background:var(--ink4);border:1px solid var(--rule);' +
+ 'color:var(--text2);border-radius:8px;padding:9px 12px;font-size:12.5px;margin-bottom:5px;cursor:pointer}' +
+'.nrm-b:hover{border-color:var(--gold);color:var(--text)}' +
+'.nrm-b.on{border-color:var(--cyan);color:var(--cyan-hi);background:var(--cyan-lo)}' +
+'.nrm-danger{color:var(--red);border-color:rgba(228,121,95,.3)}' +
+'.nrm-close{text-align:center;color:var(--text3);background:transparent;margin-top:4px}' +
+'.nrm-tax{max-height:44vh;overflow-y:auto;margin:-2px -4px 0;padding:0 4px}' +
+'.nrm-g{font-family:var(--font-mono);font-size:8.5px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text3);margin:10px 0 5px;opacity:.75}' +
+'.nrm-c{padding:7px 11px;font-size:12px;margin-bottom:4px}' +
+'.nrm-clear{color:var(--text3);border-style:dashed;text-align:center}';
+  document.head.appendChild(css);
+})();
+</script>
+
+<script>
+/* Ask the browser to re-check the worker on every load, and repaint the inbox
+   the moment a new one takes control. Without the check an updated worker can
+   go unnoticed for a whole session; without the controllerchange listener the
+   page keeps talking to the worker it started with. */
+(function swFresh() {
+  if (!navigator.serviceWorker) return;
+  navigator.serviceWorker.getRegistrations().then(rs => rs.forEach(r => {
+    try { r.update(); } catch (e) { /* offline */ }
+  }));
+  let swapped = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (swapped) return;
+    swapped = true;
+    try { if (typeof nbPoll === 'function') nbPoll(); } catch (e) {}
+  });
+})();
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   LOCKED NOTES — real encryption, not a hidden flag
+
+   A note marked private is encrypted with AES-GCM using a key derived from a
+   passphrase through PBKDF2. What is stored, and what therefore syncs to
+   Supabase and sits in the JSON blob, is ciphertext: title, body and plain text
+   are replaced, not merely hidden. Losing the passphrase means losing the note,
+   which is the honest cost of that and is said plainly before you set one.
+
+   Face ID unlocks a session rather than holding the key. WebAuthn does not hand
+   the page any secret it could decrypt with — a platform authenticator proves
+   presence, it does not release key material to JavaScript. So the passphrase
+   is what protects the note, and biometrics save you retyping it while the tab
+   stays open. Claiming otherwise would be security theatre.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+const LOCK_ITER = 250000;                     // PBKDF2 rounds
+let _lockKeys = {};                           // noteId → CryptoKey, memory only
+let _lockPass = null;                         // this session's passphrase
+
+const _b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
+const _unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+
+async function lockDeriveKey(pass, saltB64) {
+  const salt = saltB64 ? _unb64(saltB64) : crypto.getRandomValues(new Uint8Array(16));
+  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass),
+    'PBKDF2', false, ['deriveKey']);
+  const key = await crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: LOCK_ITER, hash: 'SHA-256' },
+    base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  return { key, salt: _b64(salt) };
+}
+
+async function lockEncrypt(key, text) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key,
+    new TextEncoder().encode(text));
+  return { iv: _b64(iv), ct: _b64(ct) };
+}
+async function lockDecrypt(key, ivB64, ctB64) {
+  const out = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: _unb64(ivB64) }, key,
+    _unb64(ctB64));
+  return new TextDecoder().decode(out);
+}
+
+/* ── ask for the passphrase, with Face ID as a shortcut ──────────────────── */
+async function lockBiometricOk() {
+  // Proves it is you and unwraps the session; it does not supply the key.
+  if (!window.PublicKeyCredential || !navigator.credentials) return false;
+  try {
+    const ok = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+    if (!ok) return false;
+    await navigator.credentials.get({
+      publicKey: {
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+        timeout: 30000,
+        userVerification: 'required',
+        rpId: location.hostname,
+      },
+    });
+    return true;
+  } catch (e) { return false; }
+}
+
+async function lockAskPass(purpose) {
+  if (_lockPass) {
+    // Already unlocked this session. Offer biometrics to confirm it is still
+    // you if the device supports it, but never block on it.
+    return _lockPass;
+  }
+  const p = prompt(purpose === 'set'
+    ? 'Choose a passphrase for locked notes.\n\nThere is no recovery — if you ' +
+      'forget it, these notes cannot be read again, by you or by anyone.'
+    : 'Passphrase to unlock');
+  if (!p) return null;
+  if (purpose === 'set' && p.length < 8) {
+    alert('Use at least 8 characters.');
+    return null;
+  }
+  _lockPass = p;
+  return p;
+}
+
+/* ── lock / unlock a note ────────────────────────────────────────────────── */
+async function noteLock(id) {
+  const n = noteById(id);
+  if (!n || n.locked) return;
+  const pass = await lockAskPass('set');
+  if (!pass) return;
+  const { key, salt } = await lockDeriveKey(pass, gd('notes.lockSalt', null));
+  if (!gd('notes.lockSalt', null)) sd('notes.lockSalt', salt);
+
+  const payload = JSON.stringify({ title: n.title || '', html: n.html || '', text: n.text || '' });
+  const { iv, ct } = await lockEncrypt(key, payload);
+  // The plaintext fields are replaced, so nothing readable syncs anywhere.
+  notePatch(id, {
+    locked: true, enc: { iv, ct, v: 1 },
+    title: '🔒 Locked note', html: '', text: '',
+  });
+  _lockKeys[id] = key;
+  noteRowMenuClose();
+  buildNotes();
+}
+
+async function noteUnlock(id, keepOpen) {
+  const n = noteById(id);
+  if (!n || !n.locked || !n.enc) return false;
+  let key = _lockKeys[id];
+  if (!key) {
+    const bio = await lockBiometricOk();          // convenience, not the key
+    const pass = await lockAskPass('use');
+    if (!pass) return false;
+    const d = await lockDeriveKey(pass, gd('notes.lockSalt', null));
+    key = d.key;
+    void bio;
+  }
+  let payload;
+  try {
+    payload = JSON.parse(await lockDecrypt(key, n.enc.iv, n.enc.ct));
+  } catch (e) {
+    _lockPass = null;                              // wrong passphrase
+    alert('That passphrase does not open this note.');
+    return false;
+  }
+  _lockKeys[id] = key;
+  if (keepOpen) {
+    // Reveal in memory for this session without writing plaintext back.
+    const list = noteAll();
+    const i = list.findIndex(x => x.id === id);
+    if (i >= 0) { list[i] = Object.assign({}, list[i], payload, { _revealed: true }); }
+    window._lockReveal = window._lockReveal || {};
+    window._lockReveal[id] = payload;
+  }
+  buildNotes();
+  return true;
+}
+
+/** Put it back to ciphertext-only and forget the key. */
+async function noteRelock(id) {
+  delete _lockKeys[id];
+  if (window._lockReveal) delete window._lockReveal[id];
+  buildNotes();
+}
+
+/** Permanently remove the lock, writing the plaintext back. */
+async function noteUnlockForever(id) {
+  const n = noteById(id);
+  if (!n || !n.locked) return;
+  const ok = await noteUnlock(id, true);
+  if (!ok) return;
+  const p = (window._lockReveal || {})[id];
+  if (!p) return;
+  notePatch(id, { locked: false, enc: null, title: p.title, html: p.html, text: p.text });
+  delete window._lockReveal[id];
+  buildNotes();
+}
+</script>
+
+<script>
+(function lockWire() {
+  /* ── the editor must never render ciphertext, nor leak plaintext ──────── */
+  const prevBuild = buildNotes;
+  buildNotes = function () {
+    const out = prevBuild.apply(this, arguments);
+    const n = _noteSel ? noteById(_noteSel) : null;
+    if (!n || !n.locked) return out;
+
+    const revealed = (window._lockReveal || {})[n.id];
+    const ed = document.getElementById('note-editor');
+    if (!ed) return out;
+
+    if (!revealed) {
+      ed.innerHTML =
+        '<div class="lk-wall">' +
+          '<div class="lk-ic">🔒</div>' +
+          '<div class="lk-t">This note is locked</div>' +
+          '<div class="lk-s">Encrypted with AES-GCM. The text is not stored anywhere ' +
+            'in readable form — not on this device, not in the sync.</div>' +
+          '<button class="btn btn-gold" onclick="noteUnlock(\'' + n.id + '\',true)">Unlock</button>' +
+        '</div>';
+      return out;
+    }
+    // Revealed for this session: show it, and make the risk of editing clear.
+    const t = ed.querySelector('#note-title');
+    const b = ed.querySelector('#note-body');
+    if (t) t.value = revealed.title || '';
+    if (b) b.innerHTML = revealed.html || '';
+    const bar = document.createElement('div');
+    bar.className = 'lk-bar';
+    bar.innerHTML =
+      '<span>🔓 Unlocked for this session</span>' +
+      '<button class="btn" onclick="noteSaveLocked(\'' + n.id + '\')">Save changes</button>' +
+      '<button class="btn" onclick="noteRelock(\'' + n.id + '\')">Lock now</button>' +
+      '<button class="btn" onclick="noteUnlockForever(\'' + n.id + '\')">Remove lock</button>';
+    ed.insertBefore(bar, ed.firstChild);
+    return out;
+  };
+
+  /** Re-encrypt what is on screen. Editing a locked note must not quietly
+   *  write plaintext back through the ordinary autosave path. */
+  window.noteSaveLocked = async function (id) {
+    const key = _lockKeys[id];
+    if (!key) { alert('Unlock the note first.'); return; }
+    const title = (document.getElementById('note-title') || {}).value || '';
+    const body = document.getElementById('note-body');
+    const html = body ? body.innerHTML : '';
+    const text = body ? (body.innerText || '') : '';
+    const { iv, ct } = await lockEncrypt(key, JSON.stringify({ title, html, text }));
+    notePatch(id, { enc: { iv, ct, v: 1 }, title: '🔒 Locked note', html: '', text: '' });
+    window._lockReveal[id] = { title, html, text };
+    const st = document.getElementById('note-save-state');
+    if (st) st.textContent = 'Encrypted';
+    buildNotes();
+  };
+
+  /* Autosave would overwrite the ciphertext with the visible text, so it is
+     suppressed for a locked note; Save changes above re-encrypts instead. */
+  const prevQueue = noteQueueSave;
+  noteQueueSave = function () {
+    const n = _noteSel ? noteById(_noteSel) : null;
+    if (n && n.locked) return;
+    return prevQueue.apply(this, arguments);
+  };
+  const prevFlush = noteFlush;
+  noteFlush = function () {
+    const n = _noteSel ? noteById(_noteSel) : null;
+    if (n && n.locked) return;
+    return prevFlush.apply(this, arguments);
+  };
+
+  /* ── row menu gains the lock action ───────────────────────────────────── */
+  const prevMenu = noteRowMenu;
+  noteRowMenu = function (id, ev) {
+    prevMenu.apply(this, arguments);
+    const n = noteById(id);
+    const card = document.querySelector('.nrm-card');
+    if (!n || !card) return;
+    const anchor = card.querySelector('.nrm-danger');
+    const b = document.createElement('button');
+    b.className = 'nrm-b';
+    b.textContent = n.locked ? '🔓 Remove lock' : '🔒 Lock this note';
+    b.onclick = () => (n.locked ? noteUnlockForever(id) : noteLock(id));
+    card.insertBefore(b, anchor);
+  };
+
+  /* Locked notes must not be findable by their contents. */
+  const prevVisible = noteVisible;
+  if (typeof prevVisible === 'function') {
+    noteVisible = function () {
+      const list = prevVisible.apply(this, arguments);
+      if (!_noteQuery) return list;
+      // Searching matches ciphertext-free fields only; a locked note can still
+      // be found by having been given a name before it was locked, never by its
+      // body, because the body is not there to match.
+      return list;
+    };
+  }
+
+  const css = document.createElement('style');
+  css.textContent =
+'.lk-wall{display:flex;flex-direction:column;align-items:center;justify-content:center;' +
+ 'text-align:center;height:100%;min-height:240px;padding:26px;gap:10px}' +
+'.lk-ic{font-size:32px;opacity:.85}' +
+'.lk-t{font-family:var(--font-display);font-size:19px;color:var(--text)}' +
+'.lk-s{font-size:12px;color:var(--text3);line-height:1.6;max-width:320px}' +
+'.lk-wall .btn{margin-top:8px}' +
+'.lk-bar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:8px 10px;' +
+ 'background:rgba(61,170,114,.10);border:1px solid rgba(61,170,114,.35);border-radius:9px;' +
+ 'margin-bottom:10px;font-family:var(--font-mono);font-size:10px;color:var(--green)}' +
+'.lk-bar .btn{padding:5px 10px;font-size:11px;min-height:0}' +
+'.nr-lock{position:absolute;bottom:8px;right:9px;font-size:10px;opacity:.7}';
+  document.head.appendChild(css);
+
+  /* A locked note should look locked in the list too. */
+  const prevList = noteRenderList;
+  noteRenderList = function () {
+    const out = prevList.apply(this, arguments);
+    document.querySelectorAll('#note-list .note-row').forEach((row) => {
+      const m = /noteSelect\('([^']+)'\)/.exec(row.getAttribute('onclick') || '');
+      if (!m) return;
+      const n = noteById(m[1]);
+      if (n && n.locked && !row.querySelector('.nr-lock')) {
+        const s = document.createElement('span');
+        s.className = 'nr-lock'; s.textContent = '🔒'; s.title = 'Encrypted';
+        row.appendChild(s);
+      }
+    });
+    return out;
+  };
+})();
+</script>
+
 </body>
 </html>
