@@ -14287,9 +14287,23 @@ function noteToAppleText(n) {
 
 /** Hand the note to a Shortcut, which creates it in Apple Notes. */
 function noteToApple(id, btn) {
+  // Save first. Editing is debounced, so sending straight after typing read a
+  // note whose html and text were still empty — and the export then contained
+  // nothing but the title and the back-link, which is exactly what it looked
+  // like: a link instead of the note.
+  try { if (_noteSel === id && typeof noteFlush === 'function') noteFlush(); } catch (e) {}
+
   const n = noteById(id);
   if (!n) return;
   const body = noteToAppleText(n);
+
+  // An export with no content is worse than none: it looks like it worked.
+  const hasContent = (n.text || '').trim().length > 0 || (n.html || '').trim().length > 0;
+  if (!hasContent) {
+    alert('This note is empty, so there is nothing to send.\n\n' +
+          'If you have just typed something, tap outside the text first so it saves.');
+    return;
+  }
 
   if (!/iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent)) {
     alert('Apple Notes can only be reached from an iPhone, iPad or Mac.\n\n' +
