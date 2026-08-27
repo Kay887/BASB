@@ -2056,11 +2056,25 @@ async function enablePushNotifications() {
       pushSetStatus('Signed out — sign in first, then enable reminders.');
       return;
     }
+    // Deduping on endpoint alone let subscriptions pile up: every reinstall or
+    // re-enable mints a fresh endpoint, so one device could hold several rows
+    // and every reminder pushed to all of them. A stable per-device id means
+    // re-subscribing replaces that device's row instead of adding to it.
+    let deviceId = localStorage.getItem('cnx_device_id');
+    if (!deviceId) {
+      deviceId = (crypto.randomUUID ? crypto.randomUUID()
+                 : 'd' + Date.now() + Math.random().toString(36).slice(2));
+      localStorage.setItem('cnx_device_id', deviceId);
+    }
+    await sbClient.from('push_subscriptions')
+      .delete().eq('user_id', authUserId).eq('device_id', deviceId);
     const { error } = await sbClient.from('push_subscriptions').upsert({
       user_id: authUserId,
       endpoint: subJson.endpoint,
       p256dh: subJson.keys.p256dh,
       auth_key: subJson.keys.auth,
+      device_id: deviceId,
+      last_seen: new Date().toISOString(),
     }, { onConflict: 'endpoint' });
     if (error) { pushSetStatus('Saved locally, but sync failed: ' + error.message); return; }
     pushSetStatus('✓ Reminders enabled on this device.');
@@ -14640,6 +14654,185 @@ async function noteUnlockForever(id) {
     });
     return out;
   };
+})();
+</script>
+
+<script>
+/* Mark this device's subscription as alive on each launch, so the engine can
+   retire rows belonging to installs that no longer exist. Apple does not always
+   return 410 for a dead endpoint, so without this a deleted PWA keeps receiving
+   pushes forever and every reminder appears several times. */
+(function pushHeartbeat() {
+  async function beat() {
+    const id = localStorage.getItem('cnx_device_id');
+    if (!id || !window.sbClient || !window.authUserId) return;
+    try {
+      await sbClient.from('push_subscriptions')
+        .update({ last_seen: new Date().toISOString() })
+        .eq('user_id', authUserId).eq('device_id', id);
+    } catch (e) { /* offline */ }
+  }
+  setTimeout(beat, 4000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) beat(); });
+})();
+</script>
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   NOTIFICATION SELF-TEST
+
+   "In-app notifications are wobbly" can mean four different failures that look
+   alike from the outside: permission withdrawn, no subscription for this
+   device, the service worker not controlling the page, or the page not
+   receiving the worker's message. Guessing between them from a description
+   wastes days. This reports each one separately, on the device that has the
+   problem.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+window.__nbLastMessage = null;
+if (navigator.serviceWorker) {
+  navigator.serviceWorker.addEventListener('message', (e) => {
+    if (e.data && e.data.type === 'cnx-push') window.__nbLastMessage = Date.now();
+  });
+}
+
+async function nbDiagnose() {
+  const out = { at: new Date().toLocaleTimeString() };
+
+  out.permission = (typeof Notification !== 'undefined') ? Notification.permission : 'unsupported';
+  out.standalone = window.matchMedia('(display-mode: standalone)').matches ||
+                   navigator.standalone === true;
+
+  if (navigator.serviceWorker) {
+    const reg = await navigator.serviceWorker.getRegistration();
+    out.swRegistered = !!reg;
+    // A worker that is installed but not *controlling* cannot message the page,
+    // which is the failure that looks most like "nothing happens".
+    out.swControlling = !!navigator.serviceWorker.controller;
+    out.swScript = navigator.serviceWorker.controller
+      ? navigator.serviceWorker.controller.scriptURL.split('/').pop() : '(none)';
+    out.swWaiting = !!(reg && reg.waiting);
+    if (reg) {
+      const sub = await reg.pushManager.getSubscription();
+      out.subscribed = !!sub;
+      out.endpointTail = sub ? sub.endpoint.slice(-12) : '(none)';
+    }
+  } else out.swRegistered = false;
+
+  out.deviceId = localStorage.getItem('cnx_device_id') ? 'set' : 'MISSING';
+
+  if (window.sbClient && window.authUserId) {
+    const { data } = await sbClient.from('push_subscriptions')
+      .select('endpoint,device_id').eq('user_id', authUserId);
+    out.rowsForAccount = (data || []).length;
+    const mine = (data || []).find(r => r.device_id === localStorage.getItem('cnx_device_id'));
+    out.thisDeviceRegistered = !!mine;
+  } else out.rowsForAccount = 'signed out';
+
+  out.lastWorkerMessage = window.__nbLastMessage
+    ? Math.round((Date.now() - window.__nbLastMessage) / 1000) + 's ago' : 'never';
+  out.toastFunction = typeof nbToast === 'function';
+  return out;
+}
+
+function nbDiagPanel(d) {
+  const row = (k, v, bad) =>
+    '<div class="nbd-r"><span>' + k + '</span><b class="' + (bad ? 'nbd-bad' : 'nbd-ok') + '">' +
+    cnxEsc(String(v)) + '</b></div>';
+  return '<div class="nbd-card">' +
+    '<div class="nbd-h">Notification self-test</div>' +
+    row('Permission', d.permission, d.permission !== 'granted') +
+    row('Installed to home screen', d.standalone ? 'yes' : 'no — iOS needs this', !d.standalone) +
+    row('Service worker controlling', d.swControlling ? 'yes' : 'NO', !d.swControlling) +
+    row('Worker script', d.swScript, false) +
+    row('Update waiting', d.swWaiting ? 'yes — reopen the app' : 'no', !!d.swWaiting) +
+    row('Push subscription', d.subscribed ? 'yes' : 'NO', !d.subscribed) +
+    row('Device id', d.deviceId, d.deviceId === 'MISSING') +
+    row('Rows for this account', d.rowsForAccount,
+        typeof d.rowsForAccount === 'number' && d.rowsForAccount > 4) +
+    row('This device registered', d.thisDeviceRegistered ? 'yes' : 'no',
+        d.thisDeviceRegistered === false) +
+    row('Last worker message', d.lastWorkerMessage, d.lastWorkerMessage === 'never') +
+    '<div class="nbd-acts">' +
+      '<button class="btn btn-gold" onclick="nbTestToast()">Test in-app toast</button>' +
+      '<button class="btn" onclick="nbTestPush(this)">Send real push</button>' +
+      '<button class="btn" onclick="nbDiagClose()">Close</button>' +
+    '</div>' +
+    '<div id="nbd-note" class="nbd-note"></div>' +
+  '</div>';
+}
+
+async function nbDiagShow() {
+  let w = document.getElementById('nb-diag');
+  if (!w) { w = document.createElement('div'); w.id = 'nb-diag'; document.body.appendChild(w); }
+  w.innerHTML = '<div class="nbd-card"><div class="nbd-h">Checking…</div></div>';
+  w.classList.add('open');
+  w.innerHTML = nbDiagPanel(await nbDiagnose());
+}
+function nbDiagClose() { const w = document.getElementById('nb-diag'); if (w) w.classList.remove('open'); }
+
+/** Proves the in-app path alone, with no push involved. */
+function nbTestToast() {
+  nbToast('Test notification', 'If you can read this, the in-app path works.');
+  const n = document.getElementById('nbd-note');
+  if (n) n.textContent = 'A toast should have appeared at the top of the screen. ' +
+    'If it did, the in-app half is fine and any problem is in delivery.';
+}
+
+/** Proves the whole chain: server → Apple → worker → page. */
+async function nbTestPush(btn) {
+  const n = document.getElementById('nbd-note');
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  window.__nbLastMessage = null;
+  try {
+    const r = await fetch(REMINDER_TEST_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SUPA_KEY, 'apikey': SUPA_KEY },
+      body: JSON.stringify({ test: true }),
+    });
+    void r;
+    if (n) n.textContent = 'Push requested. Watch for a banner, and for the toast. ' +
+      'Reopen this panel in ten seconds — if "Last worker message" is still never, ' +
+      'the push is not reaching this device.';
+  } catch (e) {
+    if (n) n.textContent = 'Could not reach the server: ' + e.message;
+  }
+  if (btn) { btn.disabled = false; btn.textContent = 'Send real push'; }
+}
+const REMINDER_TEST_URL = 'https://hzpdbhufpceikcbqgpiv.functions.supabase.co/send-reminders';
+
+(function nbDiagInstall() {
+  const css = document.createElement('style');
+  css.textContent =
+'#nb-diag{position:fixed;inset:0;z-index:9700;display:none;align-items:center;justify-content:center;' +
+ 'background:rgba(0,0,0,.6);padding:18px}' +
+'#nb-diag.open{display:flex}' +
+'.nbd-card{background:var(--ink3);border:1px solid var(--rule2);border-radius:14px;padding:16px;' +
+ 'width:min(380px,94vw);max-height:86vh;overflow-y:auto}' +
+'.nbd-h{font-family:var(--font-display);font-size:17px;color:var(--text);margin-bottom:12px}' +
+'.nbd-r{display:flex;justify-content:space-between;gap:10px;padding:7px 0;' +
+ 'border-bottom:1px solid var(--rule);font-size:12px;color:var(--text3)}' +
+'.nbd-r b{font-family:var(--font-mono);font-size:11px;font-weight:500;text-align:right}' +
+'.nbd-ok{color:var(--green)}' +
+'.nbd-bad{color:var(--red)}' +
+'.nbd-acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:14px}' +
+'.nbd-acts .btn{padding:7px 12px;font-size:11.5px;min-height:0}' +
+'.nbd-note{font-size:11.5px;color:var(--text3);line-height:1.6;margin-top:10px;min-height:14px}';
+  document.head.appendChild(css);
+
+  // Long-press the bell to open the self-test.
+  function wire() {
+    const btn = document.getElementById('nb-btn');
+    if (!btn || btn.dataset.diagWired) return;
+    btn.dataset.diagWired = '1';
+    let t;
+    btn.addEventListener('touchstart', () => { t = setTimeout(nbDiagShow, 650); }, { passive: true });
+    ['touchend', 'touchmove', 'touchcancel'].forEach(e =>
+      btn.addEventListener(e, () => clearTimeout(t), { passive: true }));
+    btn.addEventListener('contextmenu', (e) => { e.preventDefault(); nbDiagShow(); });
+  }
+  setTimeout(wire, 2000);
+  const prev = buildView;
+  buildView = function () { const o = prev.apply(this, arguments); setTimeout(wire, 40); return o; };
 })();
 </script>
 
