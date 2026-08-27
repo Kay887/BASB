@@ -1,4 +1,14 @@
 // sw.js — handles incoming push events and notification clicks
+//
+// A new worker normally waits until every tab and PWA window for this scope is
+// closed before taking over. A phone's PWA is rarely "closed", so an updated
+// worker could sit waiting for days while the old one kept control — which is
+// why in-app notifications did not appear after the fix that added them was
+// uploaded. skipWaiting and clients.claim make an update take effect on the
+// next load instead.
+self.addEventListener('install', (e) => { self.skipWaiting(); });
+self.addEventListener('activate', (e) => { e.waitUntil(self.clients.claim()); });
+
 self.addEventListener('push', event => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; } catch(e) { data = { title: 'CNX Master OS', body: event.data ? event.data.text() : '' }; }
