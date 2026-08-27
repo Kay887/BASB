@@ -14688,10 +14688,21 @@ async function noteUnlockForever(id) {
    problem.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-window.__nbLastMessage = null;
+// Persisted, because a JavaScript variable resets on every reload — so a push
+// that arrived while the app was closed, or any reopen afterwards, made this
+// read "never" whether or not the worker had ever spoken. That made the single
+// most diagnostic line in the panel meaningless.
+window.__nbLastMessage = Number(localStorage.getItem('cnx_last_sw_msg') || 0) || null;
+window.__nbMsgCount = Number(localStorage.getItem('cnx_sw_msg_count') || 0);
 if (navigator.serviceWorker) {
   navigator.serviceWorker.addEventListener('message', (e) => {
-    if (e.data && e.data.type === 'cnx-push') window.__nbLastMessage = Date.now();
+    if (!e.data || e.data.type !== 'cnx-push') return;
+    window.__nbLastMessage = Date.now();
+    window.__nbMsgCount = (window.__nbMsgCount || 0) + 1;
+    try {
+      localStorage.setItem('cnx_last_sw_msg', String(window.__nbLastMessage));
+      localStorage.setItem('cnx_sw_msg_count', String(window.__nbMsgCount));
+    } catch (err) { /* private mode */ }
   });
 }
 
@@ -14730,6 +14741,14 @@ async function nbDiagnose() {
 
   out.lastWorkerMessage = window.__nbLastMessage
     ? Math.round((Date.now() - window.__nbLastMessage) / 1000) + 's ago' : 'never';
+  out.workerMessages = window.__nbMsgCount || 0;
+  // Notifications the OS has actually shown, which distinguishes "the push
+  // never arrived" from "it arrived but the page was not open to hear it".
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    const shown = reg ? await reg.getNotifications({ includeTriggered: true }) : [];
+    out.osNotifications = shown.length;
+  } catch (e) { out.osNotifications = '?'; }
   out.toastFunction = typeof nbToast === 'function';
   return out;
 }
@@ -14752,6 +14771,8 @@ function nbDiagPanel(d) {
     row('This device registered', d.thisDeviceRegistered ? 'yes' : 'no',
         d.thisDeviceRegistered === false) +
     row('Last worker message', d.lastWorkerMessage, d.lastWorkerMessage === 'never') +
+    row('Worker messages ever', d.workerMessages, d.workerMessages === 0) +
+    row('OS notifications queued', d.osNotifications, false) +
     '<div class="nbd-acts">' +
       '<button class="btn btn-gold" onclick="nbTestToast()">Test in-app toast</button>' +
       '<button class="btn" onclick="nbTestPush(this)">Send real push</button>' +
@@ -14778,23 +14799,36 @@ function nbTestToast() {
     'If it did, the in-app half is fine and any problem is in delivery.';
 }
 
-/** Proves the whole chain: server → Apple → worker → page. */
+/** Proves the whole chain: server → Apple → worker → page.
+ *  It queues a real alert first, because the engine only pushes what is due —
+ *  calling it with nothing pending returned success and sent nothing, which
+ *  looked like a delivery failure. */
 async function nbTestPush(btn) {
   const n = document.getElementById('nbd-note');
   if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
   window.__nbLastMessage = null;
   try {
+    if (!sbClient || !authUserId) throw new Error('sign in first');
+    const { error: insErr } = await sbClient.from('reminder_alerts').insert({
+      user_id: authUserId,
+      text: 'Self-test — this is the notification you asked for',
+      due_at: new Date(Date.now() - 30000).toISOString(),   // already due
+      notified: false,
+    });
+    if (insErr) throw new Error(insErr.message);
+
     const r = await fetch(REMINDER_TEST_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + SUPA_KEY, 'apikey': SUPA_KEY },
-      body: JSON.stringify({ test: true }),
+      body: '{}',
     });
-    void r;
-    if (n) n.textContent = 'Push requested. Watch for a banner, and for the toast. ' +
-      'Reopen this panel in ten seconds — if "Last worker message" is still never, ' +
-      'the push is not reaching this device.';
+    const d = await r.json().catch(() => ({}));
+    if (n) n.textContent = 'Sent to ' + (d.pushed ?? '?') + ' device(s). Keep this app open — ' +
+      'a toast should appear within a few seconds. Then reopen this panel: ' +
+      '"Worker messages ever" should no longer be zero.';
   } catch (e) {
-    if (n) n.textContent = 'Could not reach the server: ' + e.message;
+    if (n) n.textContent = 'Failed: ' + e.message +
+      (/load failed|fetch/i.test(e.message) ? ' — the request was blocked before it reached the server.' : '');
   }
   if (btn) { btn.disabled = false; btn.textContent = 'Send real push'; }
 }
@@ -14819,7 +14853,29 @@ const REMINDER_TEST_URL = 'https://hzpdbhufpceikcbqgpiv.functions.supabase.co/se
 '.nbd-note{font-size:11.5px;color:var(--text3);line-height:1.6;margin-top:10px;min-height:14px}';
   document.head.appendChild(css);
 
-  // Long-press the bell to open the self-test.
+  // A diagnostic reachable only by long-press or right-click is a diagnostic
+  // nobody finds: neither gesture exists on a trackpad. It now also appears as
+  // a row inside the notification panel, which is where you already are when
+  // notifications are misbehaving.
+  function wirePanelLink() {
+    const body = document.getElementById('nb-body');
+    if (!body || document.getElementById('nbd-link')) return;
+    const a = document.createElement('div');
+    a.id = 'nbd-link';
+    a.textContent = '⚙ Notification self-test';
+    a.onclick = (e) => { e.stopPropagation(); nbDiagShow(); };
+    a.style.cssText = 'margin-top:12px;padding-top:10px;border-top:1px solid var(--rule);' +
+      'font-family:var(--font-mono);font-size:10px;color:var(--text3);cursor:pointer;text-align:center';
+    body.appendChild(a);
+  }
+  const prevToggle = nbToggle;
+  nbToggle = function () {
+    const out = prevToggle.apply(this, arguments);
+    setTimeout(wirePanelLink, 120);
+    return out;
+  };
+
+  // Long-press (touch) or right-click (desktop) the bell also opens it.
   function wire() {
     const btn = document.getElementById('nb-btn');
     if (!btn || btn.dataset.diagWired) return;
