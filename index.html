@@ -15104,9 +15104,17 @@ function noteTemplateHtml(kind, note) {
   return '<div class="nt-block">' +
     meta('Date', date) + meta('Category', cat) + meta('Tags', tags) +
     '</div>' +
-    t.fields.map(f =>
-      '<div class="nt-f"><div class="nt-l">' + cnxEsc(f) + '</div>' +
-      '<div class="nt-b"><br></div></div>').join('') +
+    t.fields.map(f => {
+      // The label is the short word; the sentence after the dash is a prompt
+      // and belongs inside the empty field, where it disappears the moment you
+      // write. Six full-sentence headings in gold monospace shouted over the
+      // content they were meant to introduce.
+      const parts = String(f).split('—');
+      const label = parts[0].trim();
+      const prompt = (parts[1] || '').trim();
+      return '<div class="nt-f"><div class="nt-l">' + cnxEsc(label) + '</div>' +
+        '<div class="nt-b" data-ph="' + cnxEsc(prompt) + '"><br></div></div>';
+    }).join('') +
     '<div><br></div>';
 }
 
@@ -15266,8 +15274,15 @@ function noteTemplateMenuClose() {
  'color:var(--text3);min-width:66px;padding-top:2px}' +
 '.nt-v{color:var(--text2)}' +
 '.nt-f{margin-bottom:10px}' +
-'.nt-l{font-family:var(--font-mono);font-size:9.5px;letter-spacing:1.4px;text-transform:uppercase;' +
- 'color:var(--gold);margin-bottom:3px}' +
+'.nt-l{font-family:var(--font-mono);font-size:9px;letter-spacing:1.6px;text-transform:uppercase;' +
+ 'color:var(--text3);margin-bottom:2px;opacity:.85}' +
+'.nt-f:focus-within .nt-l{color:var(--gold);opacity:1}' +
+// A contenteditable field is never :empty — it holds a <br> so the caret has
+// somewhere to sit — and ::before cannot attach to a <br>, which is a replaced
+// element with no content box. :has() tests for that lone <br> instead.
+'.nt-b[data-ph]:empty::before,' +
+'.nt-b[data-ph]:has(> br:only-child)::before{content:attr(data-ph);' +
+ 'color:var(--text3);opacity:.55;font-style:italic;pointer-events:none;display:inline}' +
 '.nt-b{min-height:1.5em;padding-left:2px;border-left:1px solid var(--rule);padding-left:9px}' +
 '#nt-menu{position:fixed;inset:0;z-index:9600;display:none;align-items:center;justify-content:center;' +
  'background:rgba(0,0,0,.55);padding:20px}' +
