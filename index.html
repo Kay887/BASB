@@ -15592,13 +15592,14 @@ async function pushHeal() {
  'transition:opacity .6s ease}' +
 '#cnx-bg.paused{opacity:.035}' +
 /* Everything the app draws must sit above it. */
-/* Only raise elements that are already statically positioned. Overlays —
-   the PIN screen above all — are position:fixed with inset:0, and forcing
-   them to relative collapsed them out of the viewport: the lock screen
-   stopped covering the page and the app appeared broken after sign-in. */
-'#sidebar,#main-wrap,#right-rail{position:relative}' +
-'#main-wrap{z-index:1}' +
-'#sidebar,#right-rail{z-index:9000}' +
+/* Raise nothing but the one container that is statically positioned on every
+   layout. The sidebar and rail are position:fixed off-canvas drawers below
+   1200px, and forcing them to relative put them back in the flow: the sidebar
+   took 248px of a 375px screen and the content rendered in the 127px left over.
+   The PIN screen is fixed with inset:0 and collapsed the same way, which broke
+   sign-in. Both already carry z-index values far above the backdrop's zero, so
+   neither needed touching in the first place. */
+'#main-wrap{position:relative;z-index:1}' +
 '@media (prefers-reduced-motion: reduce){#cnx-bg{opacity:.04}}';
   document.head.appendChild(css);
 
