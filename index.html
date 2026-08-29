@@ -15592,10 +15592,13 @@ async function pushHeal() {
  'transition:opacity .6s ease}' +
 '#cnx-bg.paused{opacity:.035}' +
 /* Everything the app draws must sit above it. */
-'#sidebar,#main-wrap,#right-rail,#rail-tab,#nb-wrap,#rx-orb,#pin-screen,' +
-'#nt-menu,#note-row-menu,#nx-preview,#nb-diag,#cnx-search-overlay,' +
-'#cnx-capture-overlay,#nb-toast{position:relative;z-index:1}' +
-'#sidebar,#right-rail,#pin-screen{z-index:9000}' +
+/* Only raise elements that are already statically positioned. Overlays —
+   the PIN screen above all — are position:fixed with inset:0, and forcing
+   them to relative collapsed them out of the viewport: the lock screen
+   stopped covering the page and the app appeared broken after sign-in. */
+'#sidebar,#main-wrap,#right-rail{position:relative}' +
+'#main-wrap{z-index:1}' +
+'#sidebar,#right-rail{z-index:9000}' +
 '@media (prefers-reduced-motion: reduce){#cnx-bg{opacity:.04}}';
   document.head.appendChild(css);
 
