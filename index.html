@@ -9779,7 +9779,7 @@ function inkAttach(canvas, opts) {
     // Once a pencil has been used, ignore fingers — that is palm rejection.
     if (pencilSeen && e.pointerType === 'touch') return;
     e.preventDefault();
-    canvas.setPointerCapture(e.pointerId);
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* pointer already released, or a replayed event: capture is an optimisation, not a requirement, and throwing here aborts the stroke */ }
     drawing = true; last = pos(e);
     strokes.push({ color, size, pts: [last] });
   });
@@ -11634,7 +11634,8 @@ function zenRakeAttach(canvas, opts) {
   canvas.addEventListener('pointerdown', e => {
     if (e.pointerType === 'pen') pencilSeen = true;
     if (pencilSeen && e.pointerType === 'touch') return;   // palm rejection
-    e.preventDefault(); canvas.setPointerCapture(e.pointerId);
+    e.preventDefault();
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* see above */ }
     drawing = true; last = pos(e); ensureSound();
     if (mode === 'stone') { stone(last); drawing = false; }
   });
@@ -14350,9 +14351,14 @@ function noteToAppleText(n) {
     const rest = ntText(clone);
     if (rest) { L.push(rest); L.push(''); }
   } else {
-    // Not a template note: send it as written, minus a repeated title.
-    let body = (n.text || '').trim();
-    if (body.startsWith(title)) body = body.slice(title.length).trim();
+    // Not a template note: send it as written. People often repeat the title as
+    // the first line of the body, and prefixing it again reads as a stutter —
+    // so drop that line specifically rather than a string prefix, which missed
+    // whenever the stored text carried leading whitespace or a stray newline.
+    const src = ntText(doc) || (n.text || '');
+    const lines = src.split('\n');
+    if (lines.length && lines[0].trim() === title) lines.shift();
+    const body = lines.join('\n').trim();
     if (body) { L.push(body); L.push(''); }
   }
 
@@ -14391,11 +14397,59 @@ function noteToApple(id, btn) {
   }
   // Record the attempt so the note shows it has a counterpart over there.
   notePatch(id, { appleSentAt: Date.now() });
-  const url = 'shortcuts://run-shortcut?name=' + encodeURIComponent(APPLE_NOTES_SHORTCUT) +
-              '&input=text&text=' + encodeURIComponent(body);
-  window.location.href = url;
-  noteRowMenuClose();
-  setTimeout(buildNotes, 400);
+
+  // The clipboard carries the note, not the URL.
+  //
+  // Passing the text as a query parameter meant iOS decoded it once before
+  // handing it to Shortcuts, and a '#' in the content — hashtags, and the
+  // back-link itself — then read as a fragment marker, so everything after the
+  // first one was discarded. That is why short notes arrived whole and longer
+  // ones came through cut. Percent-encoding does not survive that second
+  // decode, and there is no escaping that does.
+  //
+  // input=clipboard hands Shortcuts the same Shortcut Input with no URL in the
+  // middle, so length and punctuation stop mattering entirely. The Shortcut
+  // needs no change.
+  const go = () => {
+    window.location.href = 'shortcuts://run-shortcut?name=' +
+      encodeURIComponent(APPLE_NOTES_SHORTCUT) + '&input=clipboard';
+    noteRowMenuClose();
+    setTimeout(buildNotes, 400);
+  };
+
+  const fallback = () => {
+    // Clipboard refused. The URL path is still correct for text with no '#' in
+    // it, but sending a note that would arrive truncated is worse than not
+    // sending it — the failure is invisible from this side. So anything
+    // containing a hash opens the preview instead, where it can be copied by
+    // hand and pasted whole.
+    if (body.indexOf('#') >= 0) {
+      alert('Could not use the clipboard, and this note contains a "#".\n\n' +
+            'Sending it by link would cut it at the first hash, so the preview ' +
+            'is opening instead — use Copy there and paste into Apple Notes.');
+      noteExportPreview(id);
+      return;
+    }
+    window.location.href = 'shortcuts://run-shortcut?name=' +
+      encodeURIComponent(APPLE_NOTES_SHORTCUT) + '&input=text&text=' + encodeURIComponent(body);
+    noteRowMenuClose();
+    setTimeout(buildNotes, 400);
+  };
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(body).then(go).catch(() => {
+      // Older Safari needs the synchronous path.
+      const ta = document.createElement('textarea');
+      ta.value = body;
+      ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
+      document.body.appendChild(ta);
+      ta.focus(); ta.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+      ta.remove();
+      ok ? go() : fallback();
+    });
+  } else fallback();
 }
 
 /* ── deep link: opening a /#note=... URL selects that note ───────────────── */
@@ -15308,6 +15362,88 @@ function noteTemplateMenuClose() {
 '.nt-def.on{border-color:var(--cyan);color:var(--cyan-hi);background:var(--cyan-lo)}' +
 '.nt-sep{height:1px;background:var(--rule);margin:14px -16px 0}' +
 '.nt-confirm{font-family:var(--font-mono);font-size:10px;color:var(--green);min-height:14px;margin-bottom:8px}';
+  document.head.appendChild(css);
+})();
+</script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   PENCIL OPENS THE CANVAS
+
+   Inside a text field iOS always converts Pencil handwriting to typed text —
+   Scribble is a system behaviour and no web page can decline it. So the only
+   way to draw is to be on a canvas, and the only question is who opens it.
+   A Pencil touching the note now does, because reaching for a small icon in a
+   sixteen-button toolbar every time is not how anyone draws.
+
+   Finger and mouse are untouched: they still place a caret and type.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+let _penAuto = true;
+
+function penAutoSet(on) {
+  _penAuto = !!on;
+  sd('notes.penAuto', _penAuto);
+  const b = document.getElementById('pen-auto-btn');
+  if (b) {
+    b.classList.toggle('on', _penAuto);
+    b.title = _penAuto ? 'Pencil opens the sketch canvas' : 'Pencil types (Scribble)';
+    b.textContent = _penAuto ? '✎' : '⌨';
+  }
+}
+
+(function penWatch() {
+  _penAuto = gd('notes.penAuto', true);
+
+  // pointerdown fires before Scribble takes the stroke, so the canvas can be
+  // opened in time for the very first mark rather than after a word of text
+  // has already appeared.
+  document.addEventListener('pointerdown', (e) => {
+    if (!_penAuto) return;
+    if (e.pointerType !== 'pen') return;
+    const body = e.target && e.target.closest && e.target.closest('#note-body');
+    if (!body) return;
+    const pane = document.getElementById('note-sketch');
+    if (pane && getComputedStyle(pane).display !== 'none') return;   // already drawing
+    e.preventDefault();
+    try { noteSketchOpen(); } catch (err) { /* editor not ready */ }
+    // Hand the stroke straight to the canvas, so the mark you started is the
+    // mark that gets drawn.
+    setTimeout(() => {
+      const cv = document.getElementById('note-sketch-canvas');
+      if (!cv) return;
+      cv.scrollIntoView({ block: 'nearest' });
+      const r = cv.getBoundingClientRect();
+      cv.dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true, cancelable: true, pointerId: e.pointerId, pointerType: 'pen',
+        pressure: e.pressure || 0.5,
+        clientX: Math.min(Math.max(e.clientX, r.left + 2), r.right - 2),
+        clientY: Math.min(Math.max(e.clientY, r.top + 2), r.bottom - 2),
+      }));
+    }, 60);
+  }, true);
+
+  // A toggle in the toolbar, because sometimes you do want to Scribble.
+  const prev = buildNotes;
+  buildNotes = function () {
+    const out = prev.apply(this, arguments);
+    const tools = document.querySelector('#note-editor .note-tools');
+    if (tools && !document.getElementById('pen-auto-btn')) {
+      const b = document.createElement('button');
+      b.id = 'pen-auto-btn';
+      b.onclick = () => penAutoSet(!_penAuto);
+      const sketch = [...tools.querySelectorAll('button')]
+        .find(x => /sketch/i.test(x.title || ''));
+      tools.insertBefore(b, sketch ? sketch.nextSibling : null);
+      penAutoSet(_penAuto);
+    }
+    return out;
+  };
+
+  const css = document.createElement('style');
+  css.textContent =
+'#pen-auto-btn.on{color:var(--cyan-hi);background:var(--cyan-lo)}' +
+'#note-sketch{scroll-margin-top:12px}';
   document.head.appendChild(css);
 })();
 </script>
