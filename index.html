@@ -15405,83 +15405,34 @@ function noteTemplateMenuClose() {
 
 <script>
 /* ═══════════════════════════════════════════════════════════════════════════
-   PENCIL OPENS THE CANVAS
+   WHY THE PENCIL CANNOT DRAW IN A NOTE
 
-   Inside a text field iOS always converts Pencil handwriting to typed text —
-   Scribble is a system behaviour and no web page can decline it. So the only
-   way to draw is to be on a canvas, and the only question is who opens it.
-   A Pencil touching the note now does, because reaching for a small icon in a
-   sixteen-button toolbar every time is not how anyone draws.
+   This block previously watched for a pen pointerdown in the note body and
+   opened the sketch canvas, on the assumption that pointerdown fires before
+   Scribble claims the stroke. It does not. Inside an editable region iOS
+   intercepts Apple Pencil input at system level and delivers text; the page
+   receives no pen pointer event to act on. The toggle it added therefore
+   promised something the platform will not allow, and a control that cannot
+   work is worse than no control.
 
-   Finger and mouse are untouched: they still place a caret and type.
+   Drawing lives in two honest places instead: the Draw tab, which is a canvas
+   and not a text field, and the sketch button in the note toolbar for a
+   diagram inside a note. Anyone who would rather the Pencil never typed can
+   turn Scribble off in Settings → Apple Pencil.
    ═══════════════════════════════════════════════════════════════════════════ */
+(function penGuidance() {
+  // Retire the toggle if a previously stored preference is still around.
+  try { sd('notes.penAuto', false); } catch (e) {}
 
-let _penAuto = true;
-
-function penAutoSet(on) {
-  _penAuto = !!on;
-  sd('notes.penAuto', _penAuto);
-  const b = document.getElementById('pen-auto-btn');
-  if (b) {
-    b.classList.toggle('on', _penAuto);
-    b.title = _penAuto ? 'Pencil opens the sketch canvas' : 'Pencil types (Scribble)';
-    b.textContent = _penAuto ? '✎' : '⌨';
-  }
-}
-
-(function penWatch() {
-  _penAuto = gd('notes.penAuto', true);
-
-  // pointerdown fires before Scribble takes the stroke, so the canvas can be
-  // opened in time for the very first mark rather than after a word of text
-  // has already appeared.
-  document.addEventListener('pointerdown', (e) => {
-    if (!_penAuto) return;
-    if (e.pointerType !== 'pen') return;
-    const body = e.target && e.target.closest && e.target.closest('#note-body');
-    if (!body) return;
-    const pane = document.getElementById('note-sketch');
-    if (pane && getComputedStyle(pane).display !== 'none') return;   // already drawing
-    e.preventDefault();
-    try { noteSketchOpen(); } catch (err) { /* editor not ready */ }
-    // Hand the stroke straight to the canvas, so the mark you started is the
-    // mark that gets drawn.
-    setTimeout(() => {
-      const cv = document.getElementById('note-sketch-canvas');
-      if (!cv) return;
-      cv.scrollIntoView({ block: 'nearest' });
-      const r = cv.getBoundingClientRect();
-      cv.dispatchEvent(new PointerEvent('pointerdown', {
-        bubbles: true, cancelable: true, pointerId: e.pointerId, pointerType: 'pen',
-        pressure: e.pressure || 0.5,
-        clientX: Math.min(Math.max(e.clientX, r.left + 2), r.right - 2),
-        clientY: Math.min(Math.max(e.clientY, r.top + 2), r.bottom - 2),
-      }));
-    }, 60);
-  }, true);
-
-  // A toggle in the toolbar, because sometimes you do want to Scribble.
   const prev = buildNotes;
   buildNotes = function () {
     const out = prev.apply(this, arguments);
-    const tools = document.querySelector('#note-editor .note-tools');
-    if (tools && !document.getElementById('pen-auto-btn')) {
-      const b = document.createElement('button');
-      b.id = 'pen-auto-btn';
-      b.onclick = () => penAutoSet(!_penAuto);
-      const sketch = [...tools.querySelectorAll('button')]
-        .find(x => /sketch/i.test(x.title || ''));
-      tools.insertBefore(b, sketch ? sketch.nextSibling : null);
-      penAutoSet(_penAuto);
-    }
+    const stale = document.getElementById('pen-auto-btn');
+    if (stale) stale.remove();
+    const btn = document.getElementById('note-sketch-btn');
+    if (btn) btn.title = 'Draw here (Apple Pencil types in text — use this, or the Draw tab)';
     return out;
   };
-
-  const css = document.createElement('style');
-  css.textContent =
-'#pen-auto-btn.on{color:var(--cyan-hi);background:var(--cyan-lo)}' +
-'#note-sketch{scroll-margin-top:12px}';
-  document.head.appendChild(css);
 })();
 </script>
 
@@ -15618,6 +15569,311 @@ async function pushHeal() {
     el.style.display = on ? '' : 'none';
   };
   if (gd('ui.ambientBg', true) === false) el.style.display = 'none';
+})();
+</script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   DRAW — a freeform surface, between Notes and Capture
+
+   The note body is a text field, and inside one iOS converts Pencil strokes to
+   typed text. Scribble is a system behaviour: it cannot be declined, only
+   avoided. A canvas is not a text field, so the Pencil draws on it — which is
+   why this is its own place rather than a mode inside the editor.
+
+   Boards are kept as images and filed like anything else, so a drawing is
+   findable beside the notes it belongs with.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+let _drawInk = null, _drawBoard = null;
+
+const DRAW_COLOURS = ['#E8EDF5', '#22D3EE', '#A855F7', '#E0B36A', '#E4795F', '#3DAA72'];
+
+function drawBoards() { return gd('draw.boards', []); }
+function drawSave(list) { sd('draw.boards', list); }
+
+function drawNew() {
+  const b = { id: 'b' + Date.now(), title: '', png: '', t: Date.now(), u: Date.now(), cat: '' };
+  const list = drawBoards(); list.push(b); drawSave(list);
+  _drawBoard = b.id;
+  buildDraw();
+}
+
+function drawOpen(id) { drawFlush(); _drawBoard = id; buildDraw(); }
+
+/** Write the canvas back to its board. Called on leaving, and after each stroke. */
+function drawFlush() {
+  if (!_drawInk || !_drawBoard) return;
+  const list = drawBoards();
+  const i = list.findIndex(b => b.id === _drawBoard);
+  if (i < 0) return;
+  if (_drawInk.isEmpty() && !list[i].png) return;
+  list[i].png = _drawInk.dataURL();
+  list[i].u = Date.now();
+  drawSave(list);
+}
+
+function drawDelete(id, e) {
+  if (e) e.stopPropagation();
+  if (!confirm('Delete this board? The drawing cannot be recovered.')) return;
+  drawSave(drawBoards().filter(b => b.id !== id));
+  if (_drawBoard === id) _drawBoard = null;
+  buildDraw();
+}
+
+function drawRename(id) {
+  const list = drawBoards();
+  const b = list.find(x => x.id === id);
+  if (!b) return;
+  const t = prompt('Name this board', b.title || '');
+  if (t === null) return;
+  b.title = t.trim(); b.u = Date.now(); drawSave(list); buildDraw();
+}
+
+/** File the drawing into the taxonomy, so it lives beside everything else. */
+function drawFile(id) {
+  drawFlush();
+  const list = drawBoards();
+  const b = list.find(x => x.id === id);
+  if (!b || !b.png) { alert('Nothing drawn yet.'); return; }
+  const caps = gd('neurix.captures', []);
+  caps.push({ text: b.title || ('Board — ' + new Date(b.t).toLocaleString()),
+    tags: ['drawing'], cat: b.cat || '', t: Date.now(),
+    attachment: { name: (b.title || 'board') + '.png', type: 'image/png', size: 0, dataUrl: b.png } });
+  sd('neurix.captures', caps);
+  const s = document.getElementById('draw-state');
+  if (s) { s.textContent = '✓ Filed to Memory Dump'; setTimeout(() => { s.textContent = ''; }, 2600); }
+}
+
+function drawColour(c) { _drawInk && _drawInk.setColor(c); drawMarkTool('c', c); }
+function drawSize(s)   { _drawInk && (_drawInk.setErase(false), _drawInk.setSize(s)); drawMarkTool('s', s); }
+function drawErase()   { _drawInk && _drawInk.setErase(true); drawMarkTool('s', 'erase'); }
+function drawClear()   { if (_drawInk && confirm('Clear this board?')) { _drawInk.clear(); drawFlush(); } }
+function drawMarkTool(kind, val) {
+  document.querySelectorAll('#draw-tools [data-' + kind + ']').forEach(el =>
+    el.classList.toggle('on', el.dataset[kind] === String(val)));
+}
+
+/** Taller or shorter, remembered between sessions. */
+function drawHeight(f) {
+  drawFlush();
+  sd('draw.height', f);
+  buildDraw();
+}
+
+/** The board as a PNG blob, on a solid ground so it is usable outside a dark app. */
+async function drawBlob() {
+  const cv = document.getElementById('draw-canvas');
+  if (!cv) return null;
+  const out = document.createElement('canvas');
+  out.width = cv.width; out.height = cv.height;
+  const c = out.getContext('2d');
+  c.fillStyle = '#0B0E13';
+  c.fillRect(0, 0, out.width, out.height);
+  c.drawImage(cv, 0, 0);
+  return await new Promise(res => out.toBlob(res, 'image/png'));
+}
+
+/** Copy the drawing itself, not a link to it, so it can be pasted anywhere. */
+async function drawCopyImage(btn) {
+  drawFlush();
+  const label = btn && btn.textContent;
+  try {
+    const blob = await drawBlob();
+    if (!blob) throw new Error('nothing to copy');
+    // ClipboardItem is the only way to put an image on the clipboard; Safari
+    // requires the promise be handed over synchronously inside the gesture.
+    if (!window.ClipboardItem) throw new Error('no image clipboard');
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    if (btn) { btn.textContent = '✓ Copied'; setTimeout(() => { btn.textContent = label; }, 1600); }
+  } catch (e) {
+    // Falling back to a download beats a silent failure: the image still leaves.
+    if (btn) { btn.textContent = '↓ Saved instead'; setTimeout(() => { btn.textContent = label; }, 2200); }
+    drawDownload();
+  }
+}
+
+/** Hand the image to the OS share sheet — Messages, Mail, Notes, anywhere. */
+async function drawShare(btn) {
+  drawFlush();
+  const label = btn && btn.textContent;
+  try {
+    const blob = await drawBlob();
+    const file = new File([blob], (drawBoards().find(b => b.id === _drawBoard)?.title || 'board') + '.png',
+      { type: 'image/png' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: 'CNX board' });
+    } else {
+      throw new Error('share unavailable');
+    }
+  } catch (e) {
+    if (String(e.name) === 'AbortError') return;      // dismissed, not failed
+    if (btn) { btn.textContent = '↓ Saved instead'; setTimeout(() => { btn.textContent = label; }, 2200); }
+    drawDownload();
+  }
+}
+
+/** Last resort and useful in its own right: write the PNG to the device. */
+async function drawDownload() {
+  const blob = await drawBlob();
+  if (!blob) return;
+  const b = drawBoards().find(x => x.id === _drawBoard);
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = ((b && b.title) || 'cnx-board') + '.png';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
+function buildDraw() {
+  const host = document.getElementById('view-draw');
+  if (!host) return;
+  const boards = drawBoards().sort((a, b) => b.u - a.u);
+  if (!_drawBoard && boards.length) _drawBoard = boards[0].id;
+  const cur = boards.find(b => b.id === _drawBoard) || null;
+
+  host.innerHTML =
+    '<div class="dw-head">' +
+      '<button class="btn btn-gold" onclick="drawNew()">+ New board</button>' +
+      '<span id="draw-state" class="dw-state"></span>' +
+      (cur ? '<span class="dw-acts">' +
+        '<button class="btn" onclick="drawRename(\'' + cur.id + '\')">Rename</button>' +
+        '<button class="btn" onclick="drawFile(\'' + cur.id + '\')">File it</button>' +
+        '</span>' : '') +
+    '</div>' +
+    '<div class="dw-wrap">' +
+      '<div class="dw-list">' +
+        (boards.length ? boards.map(b =>
+          '<div class="dw-item' + (b.id === _drawBoard ? ' on' : '') + '" onclick="drawOpen(\'' + b.id + '\')">' +
+            (b.png ? '<img src="' + b.png + '" alt="">' : '<div class="dw-blank">empty</div>') +
+            '<div class="dw-meta"><b>' + cnxEsc(b.title || 'Untitled board') + '</b>' +
+            '<small>' + new Date(b.u).toLocaleDateString([], { month:'short', day:'numeric' }) + '</small></div>' +
+            '<button class="dw-x" onclick="drawDelete(\'' + b.id + '\',event)">✕</button>' +
+          '</div>').join('')
+          : '<div class="empty" style="padding:18px 8px">No boards yet.</div>') +
+      '</div>' +
+      '<div class="dw-canvas-wrap">' +
+        (cur
+          ? '<div id="draw-tools" class="dw-tools">' +
+              DRAW_COLOURS.map(c => '<span class="dw-c" data-c="' + c + '" style="background:' + c +
+                '" onclick="drawColour(\'' + c + '\')"></span>').join('') +
+              '<span class="dw-sep"></span>' +
+              [['1.4','Fine'],['3','Med'],['6.5','Bold'],['12','Marker']].map(([v,l]) =>
+                '<button class="btn dw-s" data-s="' + v + '" onclick="drawSize(' + v + ')">' + l + '</button>').join('') +
+              '<button class="btn dw-s" data-s="erase" onclick="drawErase()">Erase</button>' +
+              '<span class="dw-sep"></span>' +
+              '<button class="btn" onclick="drawClear()">Clear</button>' +
+              '<span class="dw-sep"></span>' +
+              [['0.45','S'],['0.62','M'],['0.85','L'],['1.4','XL']].map(([v,l]) =>
+                '<button class="btn dw-h" data-h="' + v + '" onclick="drawHeight(' + v + ')" ' +
+                'title="Canvas height">' + l + '</button>').join('') +
+              '<span class="dw-sep"></span>' +
+              '<button class="btn" onclick="drawCopyImage(this)">📋 Copy image</button>' +
+              '<button class="btn" onclick="drawShare(this)">↗ Share</button>' +
+              '<button class="btn" onclick="drawDownload()">⤓ Save</button>' +
+              '<span class="dw-hint">Pencil pressure changes the line</span>' +
+            '</div>' +
+            '<canvas id="draw-canvas"></canvas>'
+          : '<div class="empty" style="padding:40px 12px">Make a board to start drawing.</div>') +
+      '</div>' +
+    '</div>';
+
+  _drawInk = null;
+  if (cur) {
+    const cv = document.getElementById('draw-canvas');
+    // Tall enough to be worth drawing on, and it follows the window.
+    // Height is yours to set: a diagram wants a strip, a mind map wants a page.
+    const factor = gd('draw.height', 0.62);
+    const h = factor >= 4
+      ? Math.round(factor)                                  // an explicit pixel height
+      : Math.max(300, Math.round(window.innerHeight * factor));
+    _drawInk = inkAttach(cv, { height: h, color: '#E8EDF5', size: 3 });
+    if (cur.png) {
+      const img = new Image();
+      img.onload = () => { try { cv.getContext('2d').drawImage(img, 0, 0, cv.clientWidth, h); } catch (e) {} };
+      img.src = cur.png;
+    }
+    // Persist as you go, so a board is never lost by navigating away.
+    ['pointerup', 'pointerleave'].forEach(ev => cv.addEventListener(ev, () => setTimeout(drawFlush, 60)));
+    drawMarkTool('c', '#E8EDF5'); drawMarkTool('s', '3');
+    drawMarkTool('h', String(gd('draw.height', 0.62)));
+  }
+}
+</script>
+
+<script>
+(function drawInstall() {
+  // The view element the dispatcher switches to.
+  if (!document.getElementById('view-draw')) {
+    const el = document.createElement('div');
+    el.id = 'view-draw'; el.className = 'view';
+    document.getElementById('views-root').appendChild(el);
+  }
+
+  // Slot it between Notes and Capture, which is where the hand reaches for it.
+  if (typeof BRAIN_MODES !== 'undefined' && !BRAIN_MODES.some(m => m.id === 'draw')) {
+    const i = BRAIN_MODES.findIndex(m => m.id === 'capture');
+    BRAIN_MODES.splice(i < 0 ? BRAIN_MODES.length : i, 0,
+      { id: 'draw', label: 'Draw', hint: 'freeform' });
+    if (typeof BRAIN_IDS !== 'undefined') BRAIN_IDS.splice(i < 0 ? BRAIN_IDS.length : i, 0, 'draw');
+  }
+  if (typeof NAV !== 'undefined' && !NAV.some(n => n.id === 'draw')) {
+    NAV.push({ id: 'draw', icon: '✎', label: 'Draw' });
+  }
+
+  const prev = buildView;
+  buildView = function (id) {
+    // Save the board before leaving it, not only when the app is closed.
+    if (currentView === 'draw' && id !== 'draw') { try { drawFlush(); } catch (e) {} }
+    const out = prev.apply(this, arguments);
+    if (id === 'draw') setTimeout(buildDraw, 40);
+    return out;
+  };
+
+  window.addEventListener('beforeunload', () => { try { drawFlush(); } catch (e) {} });
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { try { drawFlush(); } catch (e) {} }
+  });
+
+  const css = document.createElement('style');
+  css.textContent =
+'.dw-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}' +
+'.dw-state{font-family:var(--font-mono);font-size:10px;color:var(--green)}' +
+'.dw-acts{margin-left:auto;display:flex;gap:6px}' +
+'.dw-acts .btn,.dw-head .btn{padding:7px 12px;font-size:12px;min-height:0}' +
+'.dw-wrap{display:grid;grid-template-columns:190px minmax(0,1fr);gap:14px}' +
+'@media(max-width:820px){.dw-wrap{grid-template-columns:1fr}' +
+ '.dw-list{display:flex;gap:8px;overflow-x:auto;max-height:none;padding-bottom:6px}' +
+ '.dw-item{min-width:132px;flex-shrink:0}}' +
+'.dw-list{background:var(--ink3);border:1px solid var(--rule);border-radius:12px;padding:8px;' +
+ 'max-height:70vh;overflow-y:auto}' +
+'.dw-item{position:relative;border:1px solid var(--rule);border-radius:9px;overflow:hidden;' +
+ 'margin-bottom:8px;cursor:pointer;background:var(--ink)}' +
+'.dw-item.on{border-color:var(--cyan)}' +
+'.dw-item img{display:block;width:100%;height:82px;object-fit:cover;background:var(--ink)}' +
+'.dw-blank{height:82px;display:flex;align-items:center;justify-content:center;' +
+ 'font-family:var(--font-mono);font-size:9px;color:var(--text3)}' +
+'.dw-meta{padding:6px 8px}' +
+'.dw-meta b{display:block;font-weight:400;font-size:11.5px;color:var(--text2);' +
+ 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+'.dw-meta small{font-family:var(--font-mono);font-size:9px;color:var(--text3)}' +
+'.dw-x{position:absolute;top:5px;right:5px;width:22px;height:22px;border-radius:6px;' +
+ 'background:rgba(0,0,0,.6);border:1px solid var(--rule2);color:var(--text3);cursor:pointer;' +
+ 'font-size:11px;line-height:1;padding:0}' +
+'.dw-canvas-wrap{background:var(--ink3);border:1px solid var(--rule);border-radius:12px;padding:10px}' +
+'.dw-tools{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:9px}' +
+'.dw-c{width:22px;height:22px;border-radius:50%;cursor:pointer;border:2px solid transparent}' +
+'.dw-c.on{border-color:var(--text)}' +
+'.dw-sep{width:1px;height:18px;background:var(--rule)}' +
+'.dw-s{padding:5px 10px;font-size:11px;min-height:0}' +
+'.dw-s.on{background:var(--cyan-lo);border-color:var(--cyan);color:var(--cyan-hi)}' +
+'.dw-h{padding:5px 9px;font-size:11px;min-height:0}' +
+'.dw-h.on{background:var(--cyan-lo);border-color:var(--cyan);color:var(--cyan-hi)}' +
+'.dw-hint{font-family:var(--font-mono);font-size:9px;color:var(--text3);margin-left:auto}' +
+/* the whole point: the canvas owns its gestures, so a Pencil draws rather than scribbles */
+'#draw-canvas{width:100%;display:block;border-radius:9px;background:var(--ink);' +
+ 'border:1px solid var(--rule);touch-action:none;cursor:crosshair}';
+  document.head.appendChild(css);
 })();
 </script>
 
