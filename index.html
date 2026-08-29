@@ -14411,10 +14411,21 @@ function noteToApple(id, btn) {
   // middle, so length and punctuation stop mattering entirely. The Shortcut
   // needs no change.
   const go = () => {
+    // Say what was handed over and how big it was. Without this there is no way
+    // to tell a clipboard that failed from a Shortcut that ignored it, and both
+    // look identical from the far end: a note that arrives wrong.
+    sd('notes.lastExport', { at: Date.now(), chars: body.length, via: 'clipboard' });
     window.location.href = 'shortcuts://run-shortcut?name=' +
       encodeURIComponent(APPLE_NOTES_SHORTCUT) + '&input=clipboard';
     noteRowMenuClose();
-    setTimeout(buildNotes, 400);
+    setTimeout(() => {
+      buildNotes();
+      alert(body.length + ' characters are on the clipboard.\n\n' +
+            'If the note in Apple Notes is shorter than that, the Shortcut is not ' +
+            'reading the clipboard — open it and check that Create Note\'s body is ' +
+            'wired to Shortcut Input.\n\n' +
+            'You can also just paste: the full note is already on your clipboard.');
+    }, 700);
   };
 
   const fallback = () => {
@@ -15445,6 +15456,78 @@ function penAutoSet(on) {
 '#pen-auto-btn.on{color:var(--cyan-hi);background:var(--cyan-lo)}' +
 '#note-sketch{scroll-margin-top:12px}';
   document.head.appendChild(css);
+})();
+</script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   SELF-HEALING PUSH REGISTRATION
+
+   The browser keeps its own push subscription, and the app hides the Enable
+   button whenever one exists with permission granted. So a device whose row
+   was removed server-side — by a cleanup, by the fortnight prune, or by any
+   mistake — kept a valid browser subscription, showed no way to re-enable, and
+   silently never received another notification.
+
+   The browser's subscription is the authority. If one exists and the database
+   has no matching row for this device, the row is written back on load.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+async function pushHeal() {
+  if (!('serviceWorker' in navigator) || !window.sbClient || !window.authUserId) return null;
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return null;
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = reg ? await reg.pushManager.getSubscription() : null;
+    if (!sub) return null;                       // nothing to restore
+
+    let deviceId = localStorage.getItem('cnx_device_id');
+    if (!deviceId) {
+      deviceId = (crypto.randomUUID ? crypto.randomUUID()
+                 : 'd' + Date.now() + Math.random().toString(36).slice(2));
+      localStorage.setItem('cnx_device_id', deviceId);
+    }
+
+    const j = sub.toJSON();
+    const { data } = await sbClient.from('push_subscriptions')
+      .select('id').eq('user_id', authUserId).eq('endpoint', j.endpoint).limit(1);
+    if (data && data.length) {
+      await sbClient.from('push_subscriptions')
+        .update({ last_seen: new Date().toISOString(), device_id: deviceId })
+        .eq('user_id', authUserId).eq('endpoint', j.endpoint);
+      return 'present';
+    }
+
+    // Row missing: put it back, replacing any older row for this device.
+    await sbClient.from('push_subscriptions')
+      .delete().eq('user_id', authUserId).eq('device_id', deviceId);
+    const { error } = await sbClient.from('push_subscriptions').insert({
+      user_id: authUserId,
+      endpoint: j.endpoint,
+      p256dh: j.keys.p256dh,
+      auth_key: j.keys.auth,
+      device_id: deviceId,
+      last_seen: new Date().toISOString(),
+    });
+    return error ? 'failed: ' + error.message : 'restored';
+  } catch (e) { return 'error: ' + e.message; }
+}
+
+(function pushHealWire() {
+  setTimeout(() => { pushHeal().then(r => { if (r) console.info('push registration:', r); }); }, 6000);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) setTimeout(pushHeal, 1500);
+  });
+
+  // Report it in the self-test, so a device that cannot heal says so.
+  if (typeof nbDiagnose === 'function') {
+    const prev = nbDiagnose;
+    nbDiagnose = async function () {
+      const out = await prev.apply(this, arguments);
+      out.registrationHeal = await pushHeal();
+      return out;
+    };
+  }
 })();
 </script>
 
