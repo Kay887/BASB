@@ -16104,20 +16104,21 @@ function remEntry(e) {
     (e.hers ? ' <em>· hers</em>' : '') +
     '<button class="rm-x" onclick="remDelete(\'' + e.id + '\')" title="Remove">✕</button></div>';
   if (e.kind === 'text')
-    return '<div class="rm-item">' + head + '<div class="rm-body">' +
+    return '<div class="rm-item" id="rm-' + e.id + '">' + head + '<div class="rm-body">' +
       cnxEsc(e.text).replace(/\n/g, '<br>') + '</div></div>';
   if (e.kind === 'voice')
-    return '<div class="rm-item">' + head +
+    return '<div class="rm-item" id="rm-' + e.id + '">' + head +
       '<audio controls preload="none" ' + (e.dataUrl ? 'src="' + e.dataUrl + '"' :
         'data-att-audio="' + cnxEsc(e.path || '') + '"') + '></audio>' +
       (e.secs ? '<span class="rm-note">' + Math.floor(e.secs/60) + 'm ' + (e.secs%60) + 's</span>' : '') +
       '</div>';
   if (e.kind === 'ink')
-    return '<div class="rm-item">' + head +
+    return '<div class="rm-item" id="rm-' + e.id + '">' + head +
       (e.dataUrl ? '<img class="rm-img" src="' + e.dataUrl + '" alt="">'
                  : '<img class="rm-img" data-att-path="' + cnxEsc(e.path || '') + '" alt="">') +
       '</div>';
-  return '<div class="rm-item">' + head + '<div class="rm-body">' + cnxEsc(e.name || 'File') + '</div></div>';
+  return '<div class="rm-item" id="rm-' + e.id + '">' + head +
+    '<div class="rm-body">' + cnxEsc(e.name || 'File') + '</div></div>';
 }
 
 /* Audio needs a signed URL too, and attHydrate only handles images. */
@@ -16206,6 +16207,155 @@ function remEntry(e) {
     }, 40);
     return out;
   };
+})();
+</script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   REMEMBRANCE → APPLE NOTES
+
+   Same idea as the notes tab, but a recording cannot travel as text. So each
+   kind leaves by the route that actually carries it: writing goes as text
+   through the clipboard, a drawing goes as an image, and a recording goes as a
+   file through the share sheet — which is the only path that puts audio into
+   Apple Notes at all.
+
+   Every entry also carries a link back, so the copy over there points home.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+function remDeepLink(id) {
+  return location.origin + location.pathname + '#remember=' + encodeURIComponent(id);
+}
+
+/** An entry as text, for the ones that are text. */
+function remAsText(e) {
+  const L = [];
+  L.push(e.hers ? 'From Amma' : 'For Amma');
+  L.push(remWhen(e.t));
+  L.push('');
+  if (e.kind === 'text') L.push((e.text || '').trim());
+  else if (e.kind === 'voice') L.push('[voice recording' + (e.secs ? ' · ' + Math.floor(e.secs/60) + 'm ' + (e.secs%60) + 's' : '') + ']');
+  else if (e.kind === 'ink') L.push('[written by hand]');
+  else L.push(e.name || '[file]');
+  L.push('');
+  L.push('— from CNX Master OS');
+  L.push(remDeepLink(e.id));
+  return L.join('\n');
+}
+
+async function remCopy(id, btn) {
+  const e = remAll().find(x => x.id === id);
+  if (!e) return;
+  if (e.kind === 'ink') return remShare(id, btn, true);   // an image copies as an image
+  await deskCopy(remAsText(e), btn);
+}
+
+async function remSendShortcut(id, btn) {
+  const e = remAll().find(x => x.id === id);
+  if (!e) return;
+  if (e.kind !== 'text') {
+    alert('A ' + (e.kind === 'voice' ? 'recording' : 'drawing') +
+          ' cannot travel as text.\n\nUse Share instead — the share sheet can put ' +
+          'the file straight into Apple Notes.');
+    return;
+  }
+  const body = remAsText(e);
+  const go = () => { window.location.href = 'shortcuts://run-shortcut?name=' +
+    encodeURIComponent(APPLE_NOTES_SHORTCUT) + '&input=clipboard'; };
+  try { await navigator.clipboard.writeText(body); go(); }
+  catch (err) { await deskCopy(body, btn); alert('Copied. Paste it into Apple Notes.'); }
+}
+
+/** The file itself, handed to iOS. The only route that carries audio. */
+async function remShare(id, btn, copyImage) {
+  const e = remAll().find(x => x.id === id);
+  if (!e) return;
+  const label = btn && btn.textContent;
+  try {
+    let blob = null, name = 'entry';
+    if (e.dataUrl) { blob = attDataUrlToBlob(e.dataUrl); }
+    else if (e.path) {
+      const url = await attUrl(e);
+      if (!url) throw new Error('could not read the file');
+      blob = await (await fetch(url)).blob();
+    }
+    if (!blob) throw new Error('nothing to share');
+    name = (e.kind === 'voice' ? 'recording' : e.kind === 'ink' ? 'written' : 'file') +
+           '-' + new Date(e.t).toISOString().slice(0, 10) +
+           (e.kind === 'voice' ? '.webm' : '.png');
+
+    if (copyImage && window.ClipboardItem && e.kind === 'ink') {
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+      if (btn) { btn.textContent = '✓ Copied'; setTimeout(() => { btn.textContent = label; }, 1600); }
+      return;
+    }
+    const file = new File([blob], name, { type: blob.type || 'application/octet-stream' });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], text: remAsText(e) });
+      return;
+    }
+    throw new Error('share unavailable');
+  } catch (err) {
+    if (String(err.name) === 'AbortError') return;
+    // Saving beats failing: the recording still leaves the app.
+    try {
+      let blob = e.dataUrl ? attDataUrlToBlob(e.dataUrl)
+                           : await (await fetch(await attUrl(e))).blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = (e.kind === 'voice' ? 'recording' : 'written') + '.' +
+                   (e.kind === 'voice' ? 'webm' : 'png');
+      document.body.appendChild(a); a.click(); a.remove();
+      if (btn) { btn.textContent = '↓ Saved'; setTimeout(() => { btn.textContent = label; }, 2000); }
+    } catch (e2) { alert('Could not export: ' + err.message); }
+  }
+}
+
+/* ── deep link back into an entry ────────────────────────────────────────── */
+(function remDeepLinkOpen() {
+  function apply() {
+    const m = /[#&]remember=([^&]+)/.exec(location.hash || '');
+    if (!m) return;
+    const id = decodeURIComponent(m[1]);
+    if (!remAll().some(e => e.id === id)) return;
+    switchView('tending');
+    setTimeout(() => {
+      const el = document.getElementById('rm-' + id);
+      if (el) { el.scrollIntoView({ block: 'center' }); el.classList.add('rm-found'); }
+    }, 700);
+  }
+  window.addEventListener('hashchange', apply);
+  setTimeout(apply, 2000);
+})();
+
+/* ── put the actions on every entry ──────────────────────────────────────── */
+(function remEntryActions() {
+  const prev = remEntry;
+  remEntry = function (e) {
+    const html = prev.apply(this, arguments);
+    const isText = e.kind === 'text';
+    const acts =
+      '<div class="rm-acts">' +
+        '<button class="rm-a" onclick="remCopy(\'' + e.id + '\',this)">' +
+          (e.kind === 'ink' ? '📋 Copy image' : '📋 Copy') + '</button>' +
+        (isText ? '<button class="rm-a" onclick="remSendShortcut(\'' + e.id + '\',this)">📝 Apple Notes</button>' : '') +
+        (isText ? '' : '<button class="rm-a" onclick="remShare(\'' + e.id + '\',this)">↗ Share</button>') +
+      '</div>';
+    // Sits inside the entry, after its content.
+    return html.replace(/<\/div>\s*$/, acts + '</div>');
+  };
+
+  const css = document.createElement('style');
+  css.textContent =
+'.rm-item{position:relative}' +
+'.rm-acts{display:flex;gap:6px;margin-top:9px;opacity:0;transition:opacity .18s;flex-wrap:wrap}' +
+'.rm-item:hover .rm-acts{opacity:1}' +
+'@media(pointer:coarse){.rm-acts{opacity:.85}}' +
+'.rm-a{background:var(--ink4);border:1px solid var(--rule);color:var(--text3);border-radius:7px;' +
+ 'padding:5px 11px;font-size:11px;cursor:pointer}' +
+'.rm-a:hover{color:var(--text2);border-color:var(--gold)}' +
+'.rm-found{outline:1px solid var(--gold);outline-offset:6px;border-radius:8px}';
+  document.head.appendChild(css);
 })();
 </script>
 
