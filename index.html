@@ -4824,26 +4824,63 @@ async function buildRen() {
   }
   filesEl.innerHTML = filesHtml || `<div class="empty">Connect Google Drive or OneDrive above to see recent files here.</div>`;
 }
-function addRenEvent() {
+async function addRenEvent() {
   const title = document.getElementById('ren-event-title').value.trim();
   const dateField = document.getElementById('ren-event-date');
   dateField.blur(); // same browser quirk fix as addChecklistItem — commit the field before reading it
   const date = dateField.value;
   const cat = document.getElementById('ren-event-cat').value;
   if (!title || !date) return;
+
+  // Queue a real alert. This wrote only to the local list before, so an event
+  // added here looked exactly like a reminder and silently never arrived —
+  // three of them had been set for the same evening and none would have fired.
+  let alertId = null, why = '';
+  const when = new Date(date);
+  if (isNaN(when)) why = 'unreadable date';
+  else if (when.getTime() <= Date.now()) why = 'that time has already passed';
+  else if (!(typeof sbClient !== 'undefined' && sbClient) ||
+           !(typeof authUserId !== 'undefined' && authUserId)) why = 'not signed in';
+  else {
+    try {
+      const { data, error } = await sbClient.from('reminder_alerts')
+        .insert({ user_id: authUserId, text: title, due_at: when.toISOString() })
+        .select('id').single();
+      if (error) why = error.message; else alertId = data.id;
+    } catch (e) { why = e.message; }
+  }
+
   const events = gd('ren.events', []);
-  events.push({ title, date, cat });
+  events.push({ title, date, cat, alertId });
   sd('ren.events', events);
+
+  // Say which happened. A reminder that quietly did not queue is the failure
+  // this is fixing, so it must never fail quietly again.
+  const note = document.createElement('div');
+  note.textContent = alertId
+    ? '✓ Saved — you will be reminded 5 minutes before.'
+    : '⚠ Saved to the list, but no reminder queued (' + (why || 'unknown') + ').';
+  note.style.cssText = 'position:fixed;bottom:20px;right:20px;background:var(--ink3);border:1px solid ' +
+    (alertId ? 'var(--green)' : 'var(--amber)') + ';color:' + (alertId ? 'var(--green)' : 'var(--amber)') +
+    ';padding:10px 14px;border-radius:8px;font-size:11px;z-index:99999;max-width:320px';
+  document.body.appendChild(note);
+  setTimeout(() => note.remove(), 6000);
   document.getElementById('ren-event-title').value = '';
   document.getElementById('ren-event-date').value = '';
   buildRen();
 }
-function deleteRenEvent(i) {
+async function deleteRenEvent(i) {
   const events = gd('ren.events', []);
+  const ev = events[i];
+  // Take the queued alert with it, or a deleted event still fires.
+  if (ev && ev.alertId && (typeof sbClient !== 'undefined' && sbClient)) {
+    try { await sbClient.from('reminder_alerts').delete().eq('id', ev.alertId); } catch (e) {}
+  }
   events.splice(i, 1);
   sd('ren.events', events);
   buildRen();
 }
+
 
 const ACTIVITY_AREA_LABELS = { academy: 'ESecurityIn', cnis: 'CNIS', whitepaper: 'White Paper', other: 'Other' };
 const ACTIVITY_AREA_COLORS = { academy: 'var(--blue)', cnis: 'var(--purple)', whitepaper: 'var(--teal)', other: 'var(--text3)' };
