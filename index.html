@@ -14900,7 +14900,7 @@ async function noteUnlockForever(id) {
 (function pushHeartbeat() {
   async function beat() {
     const id = localStorage.getItem('cnx_device_id');
-    if (!id || !window.sbClient || !window.authUserId) return;
+    if (!id || !(typeof sbClient !== 'undefined' && sbClient) || !(typeof authUserId !== 'undefined' && authUserId)) return;
     try {
       await sbClient.from('push_subscriptions')
         .update({ last_seen: new Date().toISOString() })
@@ -14966,7 +14966,7 @@ async function nbDiagnose() {
 
   out.deviceId = localStorage.getItem('cnx_device_id') ? 'set' : 'MISSING';
 
-  if (window.sbClient && window.authUserId) {
+  if ((typeof sbClient !== 'undefined' && sbClient) && (typeof authUserId !== 'undefined' && authUserId)) {
     const { data } = await sbClient.from('push_subscriptions')
       .select('endpoint,device_id').eq('user_id', authUserId);
     out.rowsForAccount = (data || []).length;
@@ -15451,7 +15451,7 @@ function noteTemplateMenuClose() {
    ═══════════════════════════════════════════════════════════════════════════ */
 
 async function pushHeal() {
-  if (!('serviceWorker' in navigator) || !window.sbClient || !window.authUserId) return null;
+  if (!('serviceWorker' in navigator) || !(typeof sbClient !== 'undefined' && sbClient) || !(typeof authUserId !== 'undefined' && authUserId)) return null;
   if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return null;
   try {
     const reg = await navigator.serviceWorker.getRegistration();
@@ -15874,6 +15874,301 @@ function buildDraw() {
 '#draw-canvas{width:100%;display:block;border-radius:9px;background:var(--ink);' +
  'border:1px solid var(--rule);touch-action:none;cursor:crosshair}';
   document.head.appendChild(css);
+})();
+</script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   REMEMBRANCE
+
+   A place to put something down about his mother — typed, spoken, or written
+   by hand — and nothing else.
+
+   There is deliberately no streak, no count of days, no prompt asking how he
+   feels out of ten, and no encouragement to write more often. Grief measured
+   is grief performed, and a system that rewards frequency would quietly teach
+   him that a quiet week is a failure. Entries are only ever listed by date.
+
+   Recordings of her voice can live here too, alongside his own — that is the
+   part he said actually reaches him.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+const REM_KEY = 'tending.remembrance';
+let _remMode = 'write';
+let _remInk = null, _remRec = null, _remChunks = [], _remStart = 0, _remTimer = null;
+
+function remAll() { return gd(REM_KEY, []); }
+function remSave(list) { sd(REM_KEY, list); }
+
+function remWhen(t) {
+  const d = new Date(t);
+  const today = localDateKey(new Date());
+  const k = localDateKey(d);
+  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (k === today) return 'Today · ' + time;
+  if (k === localDateKey(new Date(Date.now() - 864e5))) return 'Yesterday · ' + time;
+  return d.toLocaleDateString([], { weekday:'long', day:'numeric', month:'long', year:'numeric' })
+       + ' · ' + time;
+}
+
+async function remAdd(entry) {
+  const list = remAll();
+  list.push(Object.assign({ id: 'r' + Date.now(), t: Date.now() }, entry));
+  remSave(list);
+  buildRemembrance();
+}
+
+function remDelete(id) {
+  if (!confirm('Remove this entry? It cannot be brought back.')) return;
+  remSave(remAll().filter(e => e.id !== id));
+  buildRemembrance();
+}
+
+function remMode(m) {
+  // Stop a recording rather than abandoning it half-made.
+  if (_remMode === 'voice' && m !== 'voice' && _remRec && _remRec.state === 'recording') remStop();
+  _remMode = m;
+  buildRemembrance();
+}
+
+/* ── typed ───────────────────────────────────────────────────────────────── */
+async function remWriteSave() {
+  const ta = document.getElementById('rem-text');
+  const text = (ta.value || '').trim();
+  if (!text) return;
+  await remAdd({ kind: 'text', text });
+}
+
+/* ── spoken ──────────────────────────────────────────────────────────────── */
+async function remRecordStart() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    _remChunks = [];
+    _remRec = new MediaRecorder(stream);
+    _remRec.ondataavailable = (e) => { if (e.data.size) _remChunks.push(e.data); };
+    _remRec.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      const blob = new Blob(_remChunks, { type: _remRec.mimeType || 'audio/webm' });
+      const secs = Math.round((Date.now() - _remStart) / 1000);
+      let path = null, dataUrl = null;
+      try {
+        // Voice belongs in Storage, not in the synced JSON blob: a few minutes
+        // of audio would bloat every save from then on.
+        path = await attUpload(blob, 'voice-' + Date.now() + '.webm');
+      } catch (e) {
+        dataUrl = await new Promise(r => { const fr = new FileReader();
+          fr.onload = () => r(fr.result); fr.readAsDataURL(blob); });
+      }
+      await remAdd({ kind: 'voice', path, dataUrl, secs, mime: blob.type });
+    };
+    _remRec.start();
+    _remStart = Date.now();
+    _remTimer = setInterval(() => {
+      const el = document.getElementById('rem-rec-time');
+      if (el) { const s = Math.round((Date.now() - _remStart) / 1000);
+        el.textContent = String(Math.floor(s / 60)).padStart(2,'0') + ':' + String(s % 60).padStart(2,'0'); }
+    }, 500);
+    buildRemembrance();
+  } catch (e) {
+    alert('Microphone not available: ' + e.message);
+  }
+}
+function remStop() {
+  clearInterval(_remTimer);
+  if (_remRec && _remRec.state === 'recording') _remRec.stop();
+  setTimeout(buildRemembrance, 300);
+}
+
+/* ── handwritten ─────────────────────────────────────────────────────────── */
+async function remInkSave() {
+  if (!_remInk || _remInk.isEmpty()) return;
+  const png = _remInk.dataURL();
+  let path = null, dataUrl = png;
+  try {
+    const blob = attDataUrlToBlob(png);
+    path = await attUpload(blob, 'hand-' + Date.now() + '.png');
+    dataUrl = null;
+  } catch (e) { /* keep it inline rather than lose it */ }
+  await remAdd({ kind: 'ink', path, dataUrl });
+  _remInk.clear();
+}
+
+/* ── something of hers ───────────────────────────────────────────────────── */
+async function remAttach(input) {
+  const f = input.files && input.files[0];
+  if (!f) return;
+  const state = document.getElementById('rem-attach-state');
+  if (state) state.textContent = 'Saving…';
+  let path = null, dataUrl = null;
+  try { path = await attUpload(f, f.name); }
+  catch (e) {
+    dataUrl = await new Promise(r => { const fr = new FileReader();
+      fr.onload = () => r(fr.result); fr.readAsDataURL(f); });
+  }
+  await remAdd({ kind: f.type.indexOf('audio') === 0 ? 'voice'
+                     : f.type.indexOf('image') === 0 ? 'ink' : 'file',
+                 path, dataUrl, name: f.name, mime: f.type, hers: true });
+  input.value = '';
+}
+
+/* ── the surface ─────────────────────────────────────────────────────────── */
+function buildRemembrance() {
+  const host = document.getElementById('tnd-remembrance');
+  if (!host) return;
+  const list = remAll().slice().sort((a, b) => b.t - a.t);
+  const recording = _remRec && _remRec.state === 'recording';
+
+  const tab = (id, label) =>
+    '<span class="rm-tab' + (_remMode === id ? ' on' : '') +
+    '" onclick="remMode(\'' + id + '\')">' + label + '</span>';
+
+  let surface = '';
+  if (_remMode === 'write') {
+    surface = '<textarea id="rem-text" class="rm-write" rows="6" ' +
+      'placeholder="Anything. A memory, a sentence, something you wish you had said."></textarea>' +
+      '<div class="rm-row"><button class="btn btn-gold" onclick="remWriteSave()">Keep it</button></div>';
+  } else if (_remMode === 'voice') {
+    surface = '<div class="rm-voice">' +
+      (recording
+        ? '<div class="rm-rec"><span class="rm-dot"></span><span id="rem-rec-time">00:00</span></div>' +
+          '<button class="btn btn-gold" onclick="remStop()">Stop and keep</button>'
+        : '<div class="rm-note">Speak to her, or about her. No one else will hear it.</div>' +
+          '<button class="btn btn-gold" onclick="remRecordStart()">● Start recording</button>') +
+      '</div>';
+  } else {
+    surface = '<canvas id="rem-canvas"></canvas>' +
+      '<div class="rm-row"><button class="btn btn-gold" onclick="remInkSave()">Keep it</button>' +
+      '<button class="btn" onclick="_remInk&&_remInk.clear()">Clear</button>' +
+      '<span class="rm-note">Apple Pencil, or a finger.</span></div>';
+  }
+
+  host.innerHTML =
+    '<div class="rm-card">' +
+      '<div class="rm-head"><span class="rm-title">For Amma</span>' +
+        '<label class="rm-attach">＋ Something of hers' +
+          '<input type="file" accept="audio/*,image/*" style="display:none" onchange="remAttach(this)">' +
+        '</label>' +
+        '<span id="rem-attach-state" class="rm-note"></span>' +
+      '</div>' +
+      '<div class="rm-tabs">' + tab('write','Write') + tab('voice','Voice') + tab('ink','By hand') + '</div>' +
+      surface +
+    '</div>' +
+    (list.length ? '<div class="rm-list">' + list.map(remEntry).join('') + '</div>' : '');
+
+  if (_remMode === 'ink') {
+    const cv = document.getElementById('rem-canvas');
+    if (cv) _remInk = inkAttach(cv, { height: 240, color: '#E8EDF5', size: 2.6 });
+  }
+  setTimeout(() => attHydrate(host), 0);
+}
+
+function remEntry(e) {
+  const head = '<div class="rm-when">' + cnxEsc(remWhen(e.t)) +
+    (e.hers ? ' <em>· hers</em>' : '') +
+    '<button class="rm-x" onclick="remDelete(\'' + e.id + '\')" title="Remove">✕</button></div>';
+  if (e.kind === 'text')
+    return '<div class="rm-item">' + head + '<div class="rm-body">' +
+      cnxEsc(e.text).replace(/\n/g, '<br>') + '</div></div>';
+  if (e.kind === 'voice')
+    return '<div class="rm-item">' + head +
+      '<audio controls preload="none" ' + (e.dataUrl ? 'src="' + e.dataUrl + '"' :
+        'data-att-audio="' + cnxEsc(e.path || '') + '"') + '></audio>' +
+      (e.secs ? '<span class="rm-note">' + Math.floor(e.secs/60) + 'm ' + (e.secs%60) + 's</span>' : '') +
+      '</div>';
+  if (e.kind === 'ink')
+    return '<div class="rm-item">' + head +
+      (e.dataUrl ? '<img class="rm-img" src="' + e.dataUrl + '" alt="">'
+                 : '<img class="rm-img" data-att-path="' + cnxEsc(e.path || '') + '" alt="">') +
+      '</div>';
+  return '<div class="rm-item">' + head + '<div class="rm-body">' + cnxEsc(e.name || 'File') + '</div></div>';
+}
+
+/* Audio needs a signed URL too, and attHydrate only handles images. */
+(function remAudioHydrate() {
+  const prev = attHydrate;
+  attHydrate = async function (root) {
+    const out = await prev.apply(this, arguments);
+    const els = (root || document).querySelectorAll('[data-att-audio]:not([data-att-done])');
+    for (const el of els) {
+      el.setAttribute('data-att-done', '1');
+      const url = await attUrl({ path: el.getAttribute('data-att-audio') });
+      if (url) el.src = url;
+    }
+    return out;
+  };
+})();
+</script>
+
+<script>
+(function remInstall() {
+  const css = document.createElement('style');
+  css.textContent =
+'#tnd-remembrance{margin-bottom:22px}' +
+'.rm-card{background:var(--ink3);border:1px solid var(--rule);border-radius:14px;padding:18px 20px}' +
+'.rm-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}' +
+'.rm-title{font-family:var(--font-display);font-size:20px;color:var(--text);font-weight:400}' +
+'.rm-attach{margin-left:auto;font-family:var(--font-mono);font-size:10px;color:var(--text3);' +
+ 'cursor:pointer;padding:5px 10px;border:1px dashed var(--rule2);border-radius:7px}' +
+'.rm-attach:hover{color:var(--text2);border-color:var(--gold)}' +
+'.rm-tabs{display:flex;gap:6px;margin-bottom:14px}' +
+'.rm-tab{padding:7px 15px;border-radius:8px;font-size:13px;color:var(--text3);cursor:pointer;' +
+ 'border:1px solid transparent}' +
+'.rm-tab:hover{color:var(--text2);background:var(--ink4)}' +
+'.rm-tab.on{background:var(--ink4);border-color:var(--rule2);color:var(--text)}' +
+'.rm-write{width:100%;background:var(--ink4);border:1px solid var(--rule);border-radius:10px;' +
+ 'color:var(--text);padding:15px 17px;font-family:var(--font-body);font-size:16px;line-height:1.85;' +
+ 'outline:none;resize:vertical}' +
+'.rm-write:focus{border-color:var(--rule2)}' +
+'.rm-write::placeholder{color:var(--text3);font-style:italic}' +
+'.rm-row{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}' +
+'.rm-note{font-size:11.5px;color:var(--text3);line-height:1.6}' +
+'.rm-voice{display:flex;flex-direction:column;align-items:center;gap:12px;padding:22px 10px;' +
+ 'background:var(--ink4);border-radius:10px}' +
+'.rm-rec{display:flex;align-items:center;gap:9px;font-family:var(--font-mono);font-size:22px;' +
+ 'color:var(--text)}' +
+'.rm-dot{width:11px;height:11px;border-radius:50%;background:var(--red);' +
+ 'animation:rmpulse 1.6s ease-in-out infinite}' +
+'@keyframes rmpulse{0%,100%{opacity:1}50%{opacity:.25}}' +
+'#rem-canvas{width:100%;display:block;border-radius:10px;background:var(--ink4);' +
+ 'border:1px solid var(--rule);touch-action:none}' +
+'.rm-list{margin-top:18px}' +
+'.rm-item{padding:14px 0;border-bottom:1px solid var(--rule)}' +
+'.rm-when{font-family:var(--font-mono);font-size:9.5px;letter-spacing:1.2px;text-transform:uppercase;' +
+ 'color:var(--text3);margin-bottom:7px;display:flex;align-items:center;gap:6px}' +
+'.rm-when em{font-style:normal;color:var(--gold);opacity:.8}' +
+'.rm-x{margin-left:auto;background:none;border:none;color:var(--text3);cursor:pointer;' +
+ 'font-size:11px;opacity:0;transition:opacity .15s;padding:2px 6px}' +
+'.rm-item:hover .rm-x{opacity:.7}' +
+'@media(pointer:coarse){.rm-x{opacity:.5}}' +
+'.rm-body{font-size:16px;line-height:1.9;color:var(--text2);white-space:pre-wrap;max-width:62ch}' +
+'.rm-img{max-width:min(100%,460px);border-radius:9px;border:1px solid var(--rule);display:block}' +
+'.rm-item audio{width:min(100%,420px);margin-top:2px}';
+  document.head.appendChild(css);
+
+  // Hook the dispatcher, not buildTending: the folded dispatcher holds a direct
+  // reference to the original function, so reassigning the name afterwards
+  // changes nothing and the block was never created.
+  const prev = buildView;
+  buildView = function (id) {
+    const out = prev.apply(this, arguments);
+    if (id !== 'tending') return out;
+    setTimeout(() => {
+      const wrap = document.querySelector('#view-tending .tnd-wrap') ||
+                   document.getElementById('view-tending');
+      if (!wrap) return;
+      let d = document.getElementById('tnd-remembrance');
+      if (!d) {
+        d = document.createElement('div');
+        d.id = 'tnd-remembrance';
+        wrap.insertBefore(d, wrap.firstChild);
+      } else if (wrap.firstElementChild !== d) {
+        // Rebuilding the tab can reinsert the programme above it; keep this first.
+        wrap.insertBefore(d, wrap.firstChild);
+      }
+      buildRemembrance();
+    }, 40);
+    return out;
+  };
 })();
 </script>
 
