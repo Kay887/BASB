@@ -16469,5 +16469,195 @@ async function remShare(id, btn, copyImage) {
 })();
 </script>
 
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   DESK, THIRD PASS — mail you can clear, files you can actually browse
+
+   Marking a message read in Gmail itself needs the gmail.modify scope; this
+   account granted gmail.readonly, and asking for write access to a mailbox to
+   tint a row grey is a poor trade. So read state is kept here, and Open goes
+   to Gmail where reading it counts for real.
+
+   Drive showed the fifteen most recent files and nothing else, which answers
+   "what did I touch" and no other question. It now groups by kind, filters,
+   and shows thumbnails at a size worth looking at.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+let _mailRead = null, _driveView = 'recent', _driveKind = 'all';
+
+function mailReadSet() {
+  if (!_mailRead) _mailRead = new Set(gd('desk.mailRead', []));
+  return _mailRead;
+}
+function mailIsRead(m, id) { return mailReadSet().has(id) || !m.unread; }
+function mailMarkRead(id, on) {
+  const s = mailReadSet();
+  on ? s.add(id) : s.delete(id);
+  sd('desk.mailRead', [...s]);
+  deskPaintLists();
+}
+function mailMarkAllRead() {
+  const s = mailReadSet();
+  _deskMail.forEach(m => s.add(m.web_link || m.subject));
+  sd('desk.mailRead', [...s]);
+  deskPaintLists();
+}
+function mailUnreadCount() {
+  return _deskMail.filter(m => !mailIsRead(m, m.web_link || m.subject)).length;
+}
+
+const DRIVE_KINDS = [
+  { id:'all',    label:'All',    test: () => true },
+  { id:'doc',    label:'Docs',   test: t => /document|\.md|text|pdf/.test(t) },
+  { id:'sheet',  label:'Sheets', test: t => /spreadsheet|csv/.test(t) },
+  { id:'slide',  label:'Slides', test: t => /presentation/.test(t) },
+  { id:'image',  label:'Images', test: t => /^image\//.test(t) },
+  { id:'folder', label:'Folders',test: t => /folder/.test(t) },
+];
+
+function driveSetView(v) { _driveView = v; deskPaintLists(); }
+function driveSetKind(k) { _driveKind = k; deskPaintLists(); }
+
+function driveGroupLabel(f) {
+  const d = f.modified_at ? new Date(f.modified_at) : null;
+  if (!d) return 'Undated';
+  const days = Math.floor((Date.now() - d.getTime()) / 864e5);
+  if (days <= 0) return 'Today';
+  if (days === 1) return 'Yesterday';
+  if (days < 7) return 'This week';
+  if (days < 31) return 'This month';
+  return d.toLocaleDateString([], { month: 'long', year: 'numeric' });
+}
+</script>
+
+<script>
+(function deskThirdPass() {
+  deskPaintLists = function () {
+    const host = document.getElementById('dk-list-body');
+    if (!host) return;
+    const q = _deskQ;
+
+    /* ── files ─────────────────────────────────────────────────────────── */
+    if (_deskTab === 'files') {
+      const kind = DRIVE_KINDS.find(k => k.id === _driveKind) || DRIVE_KINDS[0];
+      let rows = _deskFiles
+        .filter(f => kind.test(String(f.mime_type || '')))
+        .filter(f => !q || String(f.name).toLowerCase().includes(q));
+      if (_driveView === 'name') rows = rows.slice().sort((a, b) =>
+        String(a.name).localeCompare(String(b.name)));
+      else rows = rows.slice().sort((a, b) =>
+        // Sort here rather than trusting the incoming order: the groups are
+        // date buckets, and one out-of-order file makes them read as nonsense
+        // — This month after July, and so on.
+        new Date(b.modified_at || 0) - new Date(a.modified_at || 0));
+
+      const chips =
+        '<div class="dk-chips">' +
+          DRIVE_KINDS.map(k => '<span class="dk-chip2' + (k.id === _driveKind ? ' on' : '') +
+            '" onclick="driveSetKind(\'' + k.id + '\')">' + k.label + '</span>').join('') +
+          '<span class="dk-chipsep"></span>' +
+          [['recent','Recent'],['name','A–Z'],['grid','Grid']].map(([v,l]) =>
+            '<span class="dk-chip2' + (_driveView === v ? ' on' : '') +
+            '" onclick="driveSetView(\'' + v + '\')">' + l + '</span>').join('') +
+        '</div>';
+
+      if (!rows.length) {
+        host.innerHTML = chips + '<div class="dk-empty">' +
+          (q ? 'No files matching “' + cnxEsc(q) + '”.' : 'Nothing here.') + '</div>';
+        return;
+      }
+
+      if (_driveView === 'grid') {
+        host.innerHTML = chips + '<div class="dk-grid2">' + rows.map(f =>
+          '<a class="dk-tile" href="' + cnxEsc(f.web_link || '#') + '" target="_blank" rel="noopener">' +
+            '<span class="dk-tile-img">' + driveIcon(f) + '</span>' +
+            '<span class="dk-tile-n">' + cnxEsc(f.name) + '</span>' +
+            '<span class="dk-tile-m">' + cnxEsc(relDay(f.modified_at)) + '</span>' +
+          '</a>').join('') + '</div>';
+        setTimeout(() => attHydrate(host), 0);
+        return;
+      }
+
+      // Grouped by when it was last touched, which is how you remember files.
+      let out = chips, lastGroup = null;
+      rows.forEach(f => {
+        const g = _driveView === 'name' ? String(f.name)[0].toUpperCase() : driveGroupLabel(f);
+        if (g !== lastGroup) { out += '<div class="dk-group">' + cnxEsc(g) + '</div>'; lastGroup = g; }
+        out += '<a class="dk-row" href="' + cnxEsc(f.web_link || '#') + '" target="_blank" rel="noopener">' +
+          '<span class="dk-ic">' + driveIcon(f) + '</span>' +
+          '<span class="dk-main"><b>' + cnxEsc(f.name) + '</b>' +
+          '<small>' + cnxEsc(relDay(f.modified_at)) +
+          (f.size_bytes ? ' · ' + driveSize(f.size_bytes) : '') +
+          (f.owner ? ' · ' + cnxEsc(f.owner) : '') + '</small></span>' +
+          '<span class="dk-go">↗</span></a>';
+      });
+      host.innerHTML = out;
+      setTimeout(() => attHydrate(host), 0);
+      return;
+    }
+
+    /* ── mail ──────────────────────────────────────────────────────────── */
+    const rows = _deskMail
+      .filter(m => !_deskUnreadOnly || !mailIsRead(m, m.web_link || m.subject))
+      .filter(m => !q || (String(m.subject) + ' ' + String(m.from_name)).toLowerCase().includes(q));
+
+    const unread = mailUnreadCount();
+    const bar = '<div class="dk-chips">' +
+      '<span class="dk-chip2' + (_deskUnreadOnly ? ' on' : '') +
+        '" onclick="deskToggleUnread()">Unread' + (unread ? ' · ' + unread : '') + '</span>' +
+      (unread ? '<span class="dk-chip2" onclick="mailMarkAllRead()">Mark all read</span>' : '') +
+      '<span class="dk-chipsep"></span>' +
+      '<span class="dk-note2">Read state is kept here — Open marks it read in Gmail</span>' +
+      '</div>';
+
+    host.innerHTML = bar + (rows.length ? rows.map(m => {
+      const id = m.web_link || m.subject;
+      const read = mailIsRead(m, id);
+      return '<div class="dk-row' + (read ? '' : ' dk-unread') + '">' +
+        '<span class="dk-ic dk-tick" onclick="mailMarkRead(' + JSON.stringify(id).replace(/"/g,'&quot;') +
+          ',' + (!read) + ')" title="' + (read ? 'Mark unread' : 'Mark read') + '">' +
+          (read ? '○' : '●') + '</span>' +
+        '<a class="dk-main" href="' + cnxEsc(m.web_link || '#') + '" target="_blank" rel="noopener" ' +
+          'onclick="mailMarkRead(' + JSON.stringify(id).replace(/"/g,'&quot;') + ',true)">' +
+          '<b>' + cnxEsc(m.subject || '(no subject)') + '</b>' +
+          '<small>' + cnxEsc(m.from_name || m.from_email || '') + ' · ' +
+          cnxEsc(relDay(m.received_at)) + '</small>' +
+          (m.snippet ? '<span class="dk-snip">' + cnxEsc(String(m.snippet).slice(0,110)) + '</span>' : '') +
+        '</a>' +
+        '<a class="dk-go" href="' + cnxEsc(m.web_link || '#') + '" target="_blank" rel="noopener">↗</a>' +
+      '</div>';
+    }).join('') : '<div class="dk-empty">' +
+      (_deskUnreadOnly ? 'Nothing unread.' : q ? 'No mail matching “' + cnxEsc(q) + '”.' : 'No mail.') +
+      '</div>');
+  };
+
+  const css = document.createElement('style');
+  css.textContent =
+'.dk-chips{display:flex;gap:5px;align-items:center;flex-wrap:wrap;margin:2px 0 10px}' +
+'.dk-chip2{padding:4px 10px;border-radius:20px;font-size:10.5px;color:var(--text3);cursor:pointer;' +
+ 'border:1px solid var(--rule);background:var(--ink4)}' +
+'.dk-chip2:hover{color:var(--text2);border-color:var(--rule2)}' +
+'.dk-chip2.on{background:var(--cyan-lo);border-color:var(--cyan);color:var(--cyan-hi)}' +
+'.dk-chipsep{flex:1}' +
+'.dk-note2{font-family:var(--font-mono);font-size:8.5px;color:var(--text3);opacity:.75}' +
+'.dk-group{font-family:var(--font-mono);font-size:8.5px;letter-spacing:1.4px;text-transform:uppercase;' +
+ 'color:var(--text3);margin:14px 0 4px;opacity:.8}' +
+'.dk-tick{cursor:pointer;user-select:none}' +
+'.dk-tick:hover{color:var(--cyan)}' +
+'.dk-row .dk-main{text-decoration:none;display:block}' +
+'.dk-grid2{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:10px}' +
+'.dk-tile{display:flex;flex-direction:column;gap:5px;padding:9px;border:1px solid var(--rule);' +
+ 'border-radius:10px;text-decoration:none;background:var(--ink4)}' +
+'.dk-tile:hover{border-color:var(--gold)}' +
+'.dk-tile-img{height:64px;display:flex;align-items:center;justify-content:center;overflow:hidden;' +
+ 'border-radius:7px;background:var(--ink);font-size:22px}' +
+'.dk-tile-img img{width:100%;height:64px;object-fit:cover;border-radius:7px}' +
+'.dk-tile-n{font-size:11px;color:var(--text2);line-height:1.35;display:-webkit-box;' +
+ '-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}' +
+'.dk-tile-m{font-family:var(--font-mono);font-size:8.5px;color:var(--text3)}';
+  document.head.appendChild(css);
+})();
+</script>
+
 </body>
 </html>
