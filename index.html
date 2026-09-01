@@ -16359,5 +16359,115 @@ async function remShare(id, btn, copyImage) {
 })();
 </script>
 
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   THREE FIXES
+
+   1. Reminders sat below the news and podcasts — the thing you act on, under
+      the things you browse. Moved above both, and the date and time fields
+      given labels: they existed and were visible, but an unlabelled 90px box
+      beside a date is not obviously "the time".
+
+   2. Remembrance entries could be deleted, but the ✕ only appeared on hover,
+      which does not exist on a tablet and is easy to miss on a laptop.
+
+   3. The note sketch canvas works — a pen stroke draws on it. What did not
+      work was finding it: it opens inline, often below the fold, so after
+      tapping the button you are still looking at the text field, where the
+      Pencil types. It now opens as a sheet you cannot miss.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+(function threeFixes() {
+
+  /* ── 1. reminders above the reading, and labelled time fields ─────────── */
+  function liftReminders() {
+    const ov = document.getElementById('view-overview');
+    if (!ov) return;
+    const kids = [...ov.children];
+    const find = (re) => kids.find(k => re.test((k.innerText || '').slice(0, 80)));
+    const rem = find(/REMINDER CHECKLIST/i);
+    const news = find(/^\s*NEWS/i);
+    const pods = find(/^\s*PODCASTS/i);
+    const anchor = news || pods;
+    if (rem && anchor && rem.compareDocumentPosition(anchor) & Node.DOCUMENT_POSITION_PRECEDING) {
+      ov.insertBefore(rem, anchor);
+    }
+    // Label the pickers. Both were present and neither said what it was.
+    const d = document.getElementById('ov-checklist-date');
+    const t = document.getElementById('ov-checklist-time');
+    if (d && !d.title) { d.title = 'Date'; d.setAttribute('aria-label', 'Date'); }
+    if (t && !t.title) { t.title = 'Time'; t.setAttribute('aria-label', 'Time'); }
+    if (t && !document.getElementById('ov-time-hint')) {
+      const s = document.createElement('span');
+      s.id = 'ov-time-hint';
+      s.className = 'fx-hint';
+      s.textContent = 'date + time → you get reminded 5 min before';
+      t.parentElement.appendChild(s);
+    }
+  }
+
+  function labelRen() {
+    const rd = document.getElementById('ren-event-date');
+    if (rd && !document.getElementById('ren-time-hint')) {
+      rd.title = 'Date and time';
+      const s = document.createElement('span');
+      s.id = 'ren-time-hint';
+      s.className = 'fx-hint';
+      s.textContent = 'set a time — you will be reminded 5 min before';
+      rd.parentElement.appendChild(s);
+    }
+  }
+
+  /* ── 3. the sketch opens as a sheet, not somewhere down the page ──────── */
+  function sketchAsSheet() {
+    const pane = document.getElementById('note-sketch');
+    if (!pane || pane.dataset.sheet) return;
+    pane.dataset.sheet = '1';
+    pane.classList.add('fx-sheet');
+    const cv = document.getElementById('note-sketch-canvas');
+    if (cv) cv.style.touchAction = 'none';
+  }
+
+  const prevOpen = window.noteSketchOpen;
+  if (typeof prevOpen === 'function') {
+    window.noteSketchOpen = function () {
+      const out = prevOpen.apply(this, arguments);
+      setTimeout(() => {
+        sketchAsSheet();
+        const pane = document.getElementById('note-sketch');
+        if (pane) pane.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      }, 60);
+      return out;
+    };
+  }
+
+  const css = document.createElement('style');
+  css.textContent =
+'.fx-hint{font-family:var(--font-mono);font-size:9px;color:var(--text3);' +
+ 'display:block;width:100%;margin-top:4px;opacity:.85}' +
+/* 2 — deletion should not depend on hovering */
+'.rm-x{opacity:.55 !important}' +
+'.rm-item:hover .rm-x{opacity:1 !important}' +
+'.rm-x:hover{color:var(--red) !important}' +
+/* 3 — the sketch as a sheet over the note */
+'.fx-sheet{position:fixed !important;left:50%;top:50%;transform:translate(-50%,-50%);' +
+ 'width:min(720px,94vw);z-index:9400;background:var(--ink3);border:1px solid var(--gold);' +
+ 'border-radius:14px;padding:14px;box-shadow:0 24px 60px rgba(0,0,0,.6)}' +
+'.fx-sheet::before{content:"Draw here — the Pencil works on this canvas";' +
+ 'display:block;font-family:var(--font-mono);font-size:9.5px;letter-spacing:1.4px;' +
+ 'text-transform:uppercase;color:var(--gold);margin-bottom:9px}' +
+'.fx-sheet canvas{touch-action:none;width:100%}';
+  document.head.appendChild(css);
+
+  const prev = buildView;
+  buildView = function (id) {
+    const out = prev.apply(this, arguments);
+    if (id === 'overview') setTimeout(liftReminders, 60);
+    if (id === 'ren') setTimeout(labelRen, 60);
+    return out;
+  };
+})();
+</script>
+
 </body>
 </html>
