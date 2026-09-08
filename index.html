@@ -16668,5 +16668,72 @@ function driveGroupLabel(f) {
 })();
 </script>
 
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   THE DAILY SCORE WAS FROZEN
+
+   streak.<date> is written every day and every day held the same number — 16,
+   for weeks. It came from averaging the eight pillars, and none of them move:
+   Wellbeing reads the checklist, which is empty because work is ticked in the
+   scheduler; Academy and CNIS are static progress figures. So the streak line,
+   the trend and the heatmap were all drawing a flat line and looked broken,
+   which is exactly what a constant is.
+
+   The score now comes from the scheduler — blocks ticked out of blocks set —
+   because that is the thing actually done each day. Pillars still contribute
+   where they hold real data, but they can no longer flatten the result.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/** Blocks ticked today, as a percentage of blocks set. */
+function schedDayPct(dateKey) {
+  const logs = gd('scheduler.logs', {})[dateKey || localDateKey(new Date())] || {};
+  const done = Object.keys(logs).filter(k => logs[k]).length;
+  if (!done) return null;                       // nothing ticked: no claim either way
+  // Total comes from the blocks themselves, falling back to what was ticked so
+  // a day is never scored above 100 if blocks were removed later.
+  const total = Math.max(done, (gd('scheduler.blockCount', 0) || 19));
+  return Math.round((done / total) * 100);
+}
+
+const _prevOverallPct = calcOverallPct;
+calcOverallPct = function () {
+  const sched = schedDayPct();
+  const pillars = _prevOverallPct.apply(this, arguments);
+  if (sched === null) return pillars;
+  // Weighted towards the scheduler, since that is what the day is made of.
+  return Math.round(sched * 0.7 + pillars * 0.3);
+};
+
+/* Backfill the days already logged, so the trend and heatmap show the shape of
+   the last weeks rather than a flat line at sixteen. */
+function streakBackfill() {
+  const logs = gd('scheduler.logs', {});
+  const days = Object.keys(logs);
+  if (!days.length) return 0;
+  let n = 0;
+  days.forEach(d => {
+    const done = Object.keys(logs[d]).filter(k => logs[d][k]).length;
+    if (!done) return;
+    const pct = Math.round((done / Math.max(done, 19)) * 100);
+    if (gd('streak.' + d, null) !== pct) { sd('streak.' + d, pct); n++; }
+  });
+  return n;
+}
+
+/* Today's number should update as blocks are ticked, not only once a day. */
+(function streakLive() {
+  function refresh() {
+    try { sd('streak.' + localDateKey(new Date()), calcOverallPct()); } catch (e) {}
+  }
+  const prev = buildView;
+  buildView = function (id) {
+    const out = prev.apply(this, arguments);
+    if (id === 'scheduler' || id === 'overview' || id === 'dashboard') setTimeout(refresh, 120);
+    return out;
+  };
+  setTimeout(() => { streakBackfill(); refresh(); }, 3000);
+})();
+</script>
+
 </body>
 </html>
