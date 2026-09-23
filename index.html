@@ -4786,6 +4786,9 @@ async function buildRen() {
       <span class="tag" style="background:${catColor[e.cat]}22;color:${catColor[e.cat]}">${catLabel[e.cat]}</span>
       <span style="flex:1;font-size:12px;color:var(--text)">${e.title}</span>
       <span style="font-family:var(--font-mono);font-size:10px;color:var(--text3)">${new Date(e.date).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}</span>
+      <span onclick='calSendTo(${JSON.stringify(e.title)}, ${JSON.stringify(e.date)}, 30, "From CNX Master OS")'
+            title="Add to Google Calendar, Outlook or Apple"
+            style="cursor:pointer;color:var(--text3);font-size:11px">📅</span>
       ${!e.real ? `<span onclick="deleteRenEvent(${manualEvents.indexOf(e)})" style="cursor:pointer;color:var(--text3);font-size:11px">✕</span>` : ''}
     </div>`).join('') : `<div class="empty">${calError ? 'Couldn\'t load Google Calendar: ' + calError : 'No events yet. ' + (!gcalToken ? 'Connect Google Calendar in Neurix to pull real events here too.' : '')}</div>`;
 
@@ -13163,7 +13166,10 @@ async function deskPaint() {
   }
 
   const agendaHtml = agenda.length ? agenda.map(e =>
-    '<div class="dk-ev" onclick="deskOpenDay(\'' + localDateKey(new Date(e.starts_at)) + '\')">' +
+    '<div class="dk-ev">' +
+    '<span class="dk-ev-cal" title="Add to another calendar" onclick="event.stopPropagation();calSendTo(' +
+      JSON.stringify(e.title).replace(/"/g,'&quot;') + ',' +
+      JSON.stringify(e.starts_at).replace(/"/g,'&quot;') + ',30,\'\')">📅</span>' +
     '<span class="dk-ev-t">' + cnxEsc(deskTime(e.starts_at, e.all_day)) + '</span>' +
     '<span class="dk-ev-n">' + cnxEsc(e.title) +
     (e.location ? '<em>' + cnxEsc(String(e.location).slice(0, 44)) + '</em>' : '') + '</span></div>').join('')
@@ -13674,7 +13680,9 @@ function deskOpenDay(key) {
 '.dk-cal-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;' +
  'margin-top:13px;padding-top:11px;border-top:1px solid var(--rule);' +
  'font-family:var(--font-mono);font-size:9.5px;color:var(--text3)}' +
-'.dk-ev{cursor:pointer;border-radius:7px;padding:9px 8px;margin:0 -8px;transition:background .15s}' +
+'.dk-ev{cursor:pointer;border-radius:7px;padding:9px 8px;margin:0 -8px;transition:background .15s;display:flex;gap:8px;align-items:baseline}' +
+'.dk-ev-cal{opacity:.5;font-size:11px;cursor:pointer}' +
+'.dk-ev:hover .dk-ev-cal{opacity:1}' +
 '.dk-ev:hover{background:var(--ink4)}' +
 '.dk-tabs{display:flex;gap:5px}' +
 '.dk-tab{padding:6px 13px;border-radius:8px;font-size:12.5px;color:var(--text3);cursor:pointer;' +
@@ -16834,6 +16842,126 @@ integPaint = async function () {
 '.ig-sw.on{border-color:var(--rule2)}' +
 '.ig-err{font-size:11.5px;color:var(--red);margin-bottom:10px}' +
 '.ig-foot .ig-note{flex-basis:100%;margin-top:6px}';
+  document.head.appendChild(css);
+})();
+</script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   SEND AN EVENT TO A REAL CALENDAR
+
+   Neither Google Calendar nor Outlook exposes a write API this app could use
+   without its own OAuth client and write scopes — and this account granted
+   read-only. What both do expose is a compose URL: a link that opens their own
+   event screen with the title, time and notes already filled in, leaving you to
+   confirm. That is one tap, needs no new permission, and cannot silently write
+   the wrong thing to your work calendar.
+
+   The Apple route is different again: iOS itself can add to a Google or
+   Outlook account, so a Shortcut with Add New Event writes there directly.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+function calStamp(d, utc) {
+  const p = n => String(n).padStart(2, '0');
+  return utc
+    ? d.getUTCFullYear() + p(d.getUTCMonth() + 1) + p(d.getUTCDate()) + 'T' +
+      p(d.getUTCHours()) + p(d.getUTCMinutes()) + '00Z'
+    : d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' +
+      p(d.getHours()) + ':' + p(d.getMinutes()) + ':00';
+}
+
+/** Google Calendar's own event screen, pre-filled. */
+function calGoogleUrl(title, start, mins, notes) {
+  const s = new Date(start), e = new Date(s.getTime() + (mins || 30) * 60000);
+  const u = new URL('https://calendar.google.com/calendar/render');
+  u.searchParams.set('action', 'TEMPLATE');
+  u.searchParams.set('text', title || 'Event');
+  u.searchParams.set('dates', calStamp(s, true) + '/' + calStamp(e, true));
+  if (notes) u.searchParams.set('details', notes);
+  return u.toString();
+}
+
+/** Outlook on the web, same idea. */
+function calOutlookUrl(title, start, mins, notes) {
+  const s = new Date(start), e = new Date(s.getTime() + (mins || 30) * 60000);
+  const u = new URL('https://outlook.office.com/calendar/0/deeplink/compose');
+  u.searchParams.set('path', '/calendar/action/compose');
+  u.searchParams.set('rru', 'addevent');
+  u.searchParams.set('subject', title || 'Event');
+  u.searchParams.set('startdt', s.toISOString());
+  u.searchParams.set('enddt', e.toISOString());
+  if (notes) u.searchParams.set('body', notes);
+  return u.toString();
+}
+
+/** An .ics file, which iOS hands to whichever calendar you choose — including
+ *  a Google or Outlook account already added in Settings. */
+function calIcsDownload(title, start, mins, notes) {
+  const s = new Date(start), e = new Date(s.getTime() + (mins || 30) * 60000);
+  const ics = [
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//CNX Master OS//EN',
+    'BEGIN:VEVENT',
+    'UID:' + Date.now() + '@cnx',
+    'DTSTAMP:' + calStamp(new Date(), true),
+    'DTSTART:' + calStamp(s, true),
+    'DTEND:' + calStamp(e, true),
+    'SUMMARY:' + String(title || 'Event').replace(/\n/g, ' '),
+    notes ? 'DESCRIPTION:' + String(notes).replace(/\n/g, '\\n') : '',
+    'END:VEVENT', 'END:VCALENDAR',
+  ].filter(Boolean).join('\r\n');
+  const blob = new Blob([ics], { type: 'text/calendar' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (title || 'event').replace(/[^\w\-]+/g, '-').slice(0, 40) + '.ics';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+
+/** The chooser, used from REN and from Desk. */
+function calSendTo(title, startIso, mins, notes) {
+  let w = document.getElementById('cal-send');
+  if (!w) { w = document.createElement('div'); w.id = 'cal-send'; document.body.appendChild(w); }
+  const esc = (x) => cnxEsc(String(x));
+  const when = new Date(startIso);
+  w.innerHTML =
+    '<div class="cs-card">' +
+      '<div class="cs-h">Add to a calendar</div>' +
+      '<div class="cs-sub">' + esc(title) + '<br><span>' +
+        esc(when.toLocaleString([], { weekday:'short', day:'numeric', month:'short',
+                                      hour:'2-digit', minute:'2-digit' })) +
+        ' · ' + (mins || 30) + ' min</span></div>' +
+      '<a class="cs-b" target="_blank" rel="noopener" href="' +
+        esc(calGoogleUrl(title, startIso, mins, notes)) + '">📅 Google Calendar</a>' +
+      '<a class="cs-b" target="_blank" rel="noopener" href="' +
+        esc(calOutlookUrl(title, startIso, mins, notes)) + '">📧 Outlook</a>' +
+      '<button class="cs-b" onclick="calIcsDownload(' +
+        JSON.stringify(title).replace(/"/g,'&quot;') + ',' +
+        JSON.stringify(startIso).replace(/"/g,'&quot;') + ',' + (mins || 30) + ',' +
+        JSON.stringify(notes || '').replace(/"/g,'&quot;') + ')">🍎 Apple / other (.ics)</button>' +
+      '<div class="cs-note">Each opens that calendar with the event filled in — ' +
+        'you confirm it there. Nothing is written without you.</div>' +
+      '<button class="cs-b cs-close" onclick="document.getElementById(\'cal-send\').classList.remove(\'open\')">Close</button>' +
+    '</div>';
+  w.classList.add('open');
+}
+
+(function calStyles() {
+  const css = document.createElement('style');
+  css.textContent =
+'#cal-send{position:fixed;inset:0;z-index:9550;display:none;align-items:center;' +
+ 'justify-content:center;background:rgba(0,0,0,.55);padding:20px}' +
+'#cal-send.open{display:flex}' +
+'.cs-card{background:var(--ink3);border:1px solid var(--rule2);border-radius:14px;' +
+ 'padding:16px;width:min(340px,92vw)}' +
+'.cs-h{font-family:var(--font-display);font-size:18px;color:var(--text);margin-bottom:6px}' +
+'.cs-sub{font-size:12.5px;color:var(--text2);margin-bottom:12px;line-height:1.6}' +
+'.cs-sub span{font-family:var(--font-mono);font-size:10px;color:var(--text3)}' +
+'.cs-b{display:block;width:100%;text-align:left;background:var(--ink4);' +
+ 'border:1px solid var(--rule);color:var(--text2);border-radius:9px;padding:11px 13px;' +
+ 'font-size:13px;margin-bottom:6px;cursor:pointer;text-decoration:none}' +
+'.cs-b:hover{border-color:var(--gold);color:var(--text)}' +
+'.cs-note{font-size:11px;color:var(--text3);line-height:1.6;margin:8px 0}' +
+'.cs-close{text-align:center;color:var(--text3);background:transparent}';
   document.head.appendChild(css);
 })();
 </script>
