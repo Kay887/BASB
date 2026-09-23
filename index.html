@@ -16735,5 +16735,108 @@ function streakBackfill() {
 })();
 </script>
 
+<script>
+/* ═══════════════════════════════════════════════════════════════════════════
+   INTEGRATIONS, PER SERVICE
+
+   Google grants one consent covering every scope, so there is no such thing as
+   disconnecting Drive alone at Google's end — anything claiming otherwise would
+   be theatre. What each service can genuinely have is its own switch: the sync
+   functions check it before doing any work, so switching Drive off actually
+   stops the cron rather than leaving it to refill the mirror every half hour.
+
+   Disconnect, the real one, clears every mirror here and sends you to Google to
+   revoke the grant, because only your Google account can do that part.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+const SYNC_COL = { calendar:'sync_calendar', drive:'sync_drive', mail:'sync_mail' };
+
+async function integPrefs() {
+  if (!(typeof sbClient !== 'undefined' && sbClient) ||
+      !(typeof authUserId !== 'undefined' && authUserId)) return {};
+  const { data } = await sbClient.from('user_prefs')
+    .select('sync_calendar,sync_drive,sync_mail').eq('user_id', authUserId).maybeSingle();
+  return data || {};
+}
+
+async function integToggle(id, on) {
+  const col = SYNC_COL[id];
+  if (!col) return;
+  const patch = {}; patch[col] = on;
+  const { error } = await sbClient.from('user_prefs')
+    .upsert(Object.assign({ user_id: authUserId }, patch), { onConflict: 'user_id' });
+  if (error) { alert('Could not change that: ' + error.message); return; }
+  if (!on) {
+    // Clear what is already mirrored, or the pane keeps showing data from a
+    // service you just switched off.
+    const svc = G_SERVICES.find(s => s.id === id);
+    if (svc) await sbClient.from(svc.table).delete().eq('user_id', authUserId);
+  }
+  integPaint();
+  if (on) integSync(G_SERVICES.find(s => s.id === id).fn);
+}
+
+integPaint = async function () {
+  const host = document.getElementById('integ-panel');
+  if (!host) return;
+  const st = await integState();
+  const prefs = await integPrefs();
+  const apple = /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent);
+
+  const row = (s) => {
+    const n = st.counts[s.id] || 0;
+    const on = prefs[SYNC_COL[s.id]] !== false;
+    return '<div class="ig-row">' +
+      '<span class="ig-ic">' + s.icon + '</span>' +
+      '<span class="ig-main"><b>' + s.label + '</b>' +
+        '<small>' + (on ? (n ? n + ' ' + s.noun + ' mirrored' : 'nothing mirrored yet')
+                        : 'switched off — not syncing') + '</small></span>' +
+      '<span class="ig-state ' + (on && n ? 'ig-on' : on ? 'ig-idle' : 'ig-off') + '">' +
+        (on ? (n ? 'Syncing' : 'Idle') : 'Off') + '</span>' +
+      '<span class="ig-acts">' +
+        '<button class="btn ig-sw' + (on ? ' on' : '') + '" onclick="integToggle(\'' + s.id +
+          '\',' + (!on) + ')">' + (on ? 'Turn off' : 'Turn on') + '</button>' +
+        (on ? '<button class="btn" onclick="integSync(\'' + s.fn + '\',this)">Sync now</button>' : '') +
+      '</span></div>';
+  };
+
+  host.innerHTML =
+    '<div class="card"><div class="card-title">Google Workspace</div>' +
+      (st.lastError ? '<div class="ig-err">Last sync error: ' + cnxEsc(st.lastError) + '</div>' : '') +
+      G_SERVICES.map(row).join('') +
+      '<div class="ig-foot">' +
+        '<button class="btn btn-gold" onclick="gConnect()">' +
+          (st.connected ? 'Reconnect' : 'Connect Google') + '</button>' +
+        '<button class="btn ig-danger" onclick="integDisconnect()">Disconnect everything</button>' +
+        '<span class="ig-note">One Google consent covers all three, so a service ' +
+        'can be switched off here but only revoked in your Google account.</span>' +
+      '</div>' +
+    '</div>' +
+
+    '<div class="card" style="margin-top:14px"><div class="card-title">Apple</div>' +
+      '<div class="ig-note" style="margin-bottom:12px">Apple publishes no web API for ' +
+        'Notes or Calendar, so these open the apps rather than mirroring them.' +
+        (apple ? '' : ' They only work on an iPhone, iPad or Mac.') + '</div>' +
+      [['🗓 Apple Calendar','appleOpenCalendar()'],
+       ['📝 Apple Notes','appleOpenNotes()'],
+       ['✅ Reminders','appleOpenReminders()']].map(([l, fn]) =>
+        '<button class="btn" style="margin:0 7px 7px 0" onclick="' + fn + '">' + l + '</button>').join('') +
+      '<div class="ig-note" style="margin-top:10px">To bring Apple Calendar events ' +
+        '<em>in</em>, share that calendar to your Google account — the calendar sync ' +
+        'already reads every calendar it can see.</div>' +
+    '</div>';
+};
+
+(function integStyles() {
+  const css = document.createElement('style');
+  css.textContent =
+'.ig-idle{background:var(--ink4);color:var(--gold)}' +
+'.ig-sw.on{border-color:var(--rule2)}' +
+'.ig-err{font-size:11.5px;color:var(--red);margin-bottom:10px}' +
+'.ig-foot .ig-note{flex-basis:100%;margin-top:6px}';
+  document.head.appendChild(css);
+})();
+</script>
+
 </body>
 </html>
