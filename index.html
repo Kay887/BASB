@@ -1927,14 +1927,56 @@ function getAtPath(obj, path) {
   for (const p of parts) { if (o == null) return undefined; o = o[p]; }
   return o;
 }
+// Paths holding append-only lists that more than one writer can add to: this
+// device, another device, and the server — a "Tell Rix" voice note is written
+// straight into the blob by the notes-ingest function. Every other path is
+// last-writer-wins, which for a whole array means the loser's additions are
+// *replaced* rather than merged. That is how a voice note saved at 23:14 was
+// erased by an app save at 23:18 that merely touched the same array.
+// Keyed on creation time, not on the text: re-filing a capture into a category
+// or editing its wording must not make it look like a different item and land
+// in the list twice. An item with neither id nor t cannot be matched safely, so
+// it is left alone rather than guessed at.
+const listKey = (x) => (x && (x.id != null ? 'id:' + x.id : x.t != null ? 't:' + x.t : null));
+const MERGE_LISTS = {
+  'neurix.captures': listKey,
+  'neurix.todos':    listKey,
+};
 function mergeState(local, cloud) {
   if (!local._ts && !cloud._ts) return (cloud.lastUpdated || 0) > (local.lastUpdated || 0) ? cloud : local;
   const localTs = local._ts || {}, cloudTs = cloud._ts || {};
   const allPaths = new Set([...Object.keys(localTs), ...Object.keys(cloudTs)]);
   const base = JSON.parse(JSON.stringify(Object.keys(cloudTs).length >= Object.keys(localTs).length ? cloud : local));
   const mergedTs = { ...localTs, ...cloudTs };
+  // The last moment this device is known to have seen the cloud. Anything the
+  // losing side added after that, this device has never seen, so its absence
+  // from the winner is a real gap and not a deletion. Read before it is
+  // restamped at the end of the merge.
+  const seenUntil = local._syncedAt || 0;
   allPaths.forEach(path => {
     const lt = localTs[path] || 0, ct = cloudTs[path] || 0;
+    const keyOf = MERGE_LISTS[path];
+    if (keyOf) {
+      const win = lt > ct ? local : cloud, lose = lt > ct ? cloud : local;
+      const winArr = getAtPath(win, path), loseArr = getAtPath(lose, path);
+      if (Array.isArray(winArr) || Array.isArray(loseArr)) {
+        const out = Array.isArray(winArr) ? winArr.slice() : [];
+        const have = new Set(out.map(keyOf).filter(k => k != null));
+        (Array.isArray(loseArr) ? loseArr : []).forEach(item => {
+          const k = keyOf(item);
+          if (k == null || have.has(k)) return;
+          // Only additions this device never saw. An item older than the last
+          // sync that the winner dropped was deleted on purpose — leave it out,
+          // or every delete would come back on the next merge.
+          if (!(item && item.t > seenUntil)) return;
+          out.push(item);
+          have.add(k);
+        });
+        setAtPath(base, path, out);
+        mergedTs[path] = Math.max(lt, ct);
+        return;
+      }
+    }
     if (lt === ct) return;
     const winner = lt > ct ? local : cloud;
     setAtPath(base, path, getAtPath(winner, path));
@@ -1942,6 +1984,7 @@ function mergeState(local, cloud) {
   });
   base._ts = mergedTs;
   base.lastUpdated = Math.max(local.lastUpdated || 0, cloud.lastUpdated || 0);
+  base._syncedAt = Date.now();
   return base;
 }
 function syncDot(on) {
