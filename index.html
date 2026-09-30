@@ -23831,6 +23831,10 @@ init();
 .nb-text{font-size:14px;line-height:1.85;color:var(--text2);}
 .nb-text b{color:var(--text);font-weight:600;}
 .nb-text .nb-src{color:var(--gold);font-weight:600;}
+.nb-voice{font-family:inherit;font-size:10.5px;color:var(--text2);padding:5px 7px;border-radius:6px;
+  background:rgba(0,0,0,.25);border:1px solid rgba(255,255,255,.12);max-width:150px;flex-shrink:0;}
+.nb-voice:focus{outline:none;border-color:var(--gold);}
+@media(max-width:760px){.nb-voice{max-width:100%;width:100%;margin-top:6px;}}
 .nb-list{margin-top:14px;padding-top:12px;border-top:1px solid var(--rule);display:flex;flex-direction:column;gap:2px;}
 .nb-item{display:flex;gap:9px;align-items:flex-start;padding:6px 0;}
 .nb-tag{font-family:var(--font-mono);font-size:8.5px;font-weight:700;letter-spacing:.06em;padding:2px 5px;border-radius:3px;flex-shrink:0;margin-top:2px;
@@ -23910,7 +23914,7 @@ init();
     const synth = window.speechSynthesis;
     if (!synth) { alert('This browser has no speech synthesis.'); return; }
     if (SPEAKING) { synth.cancel(); SPEAKING = false; paintBtn(); return; }
-    const el = document.getElementById('nb-text');
+    const el = document.getElementById('cnx-read-text');
     if (!el) return;
     const u = new SpeechSynthesisUtterance(el.textContent || '');
     // Female US English by preference. The platform exposes no gender field, so
@@ -23935,7 +23939,7 @@ init();
   };
 
   function paintBtn() {
-    const b = document.getElementById('nb-btn');
+    const b = document.getElementById('cnx-read-btn');
     if (!b) return;
     b.textContent = SPEAKING ? '■ Stop' : '▶ Read it to me';
     b.classList.toggle('nb-speaking', SPEAKING);
@@ -23944,10 +23948,10 @@ init();
   async function render() {
     const host = document.getElementById('view-overview');
     if (!host) return;
-    let el = document.getElementById('nb');
+    let el = document.getElementById('cnx-read');
     if (!el) {
       el = document.createElement('div');
-      el.id = 'nb'; el.className = 'card nb-card';
+      el.id = 'cnx-read'; el.className = 'card nb-card';
       host.insertBefore(el, host.firstChild);
     }
     if (el.dataset.loaded === 'yes') return;      // the 10-minute cache lives in fetchNewsRSS
@@ -23960,18 +23964,46 @@ init();
         items.push({tag: src.label.split(' ')[0].slice(0, 4).toUpperCase(), title: clean(it.title), link: it.link}));
     });
     el.dataset.loaded = 'yes';
+    setTimeout(fillVoices, 60);
+    try { window.speechSynthesis?.addEventListener?.('voiceschanged', fillVoices); } catch (e) {}
     el.innerHTML =
       '<div class="nb-head"><div class="card-title" style="margin:0">The morning read</div>' +
       '<span class="nb-when">' + esc(new Date().toLocaleString(undefined, {weekday:'short', hour:'2-digit', minute:'2-digit'})) + '</span>' +
-      '<button class="btn btn-gold" id="nb-btn" onclick="cnxBriefSpeak()">▶ Read it to me</button></div>' +
-      '<div class="nb-text" id="nb-text">' + esc(text) + '</div>' +
+      '<button class="btn btn-gold" id="cnx-read-btn" onclick="cnxBriefSpeak()">▶ Read it to me</button>' +
+      '<select class="nb-voice" id="cnx-read-voice" onchange="cnxBriefSetVoice(this.value)" title="Voice"></select></div>' +
+      '<div class="nb-text" id="cnx-read-text">' + esc(text) + '</div>' +
       (items.length ? '<div class="nb-list">' + items.map((i) =>
         '<div class="nb-item"><span class="nb-tag">' + esc(i.tag) + '</span>' +
         '<a href="' + esc(i.link) + '" target="_blank" rel="noopener">' + esc(i.title) + '</a></div>').join('') + '</div>' : '');
   }
 
+  window.cnxBriefSetVoice = function (name) {
+    try { sd('cnx.read.voice', name || ''); } catch (e) {}
+    if (typeof toast === 'function') toast(name ? 'Voice set to ' + name : 'Voice reset to automatic');
+  };
+
+  // Filled after render: getVoices() is async on first call, and on iOS the
+  // list grows again once downloaded Enhanced voices finish installing.
+  function fillVoices() {
+    const sel = document.getElementById('cnx-read-voice');
+    const synth = window.speechSynthesis;
+    if (!sel || !synth) return;
+    const voices = (synth.getVoices() || []).filter((v) => /^en/i.test(v.lang));
+    if (!voices.length) {
+      // Genuinely empty rather than not-yet-loaded is rare but real (a browser
+      // with no speech data). An empty dropdown reads as broken; say so.
+      sel.innerHTML = '<option value="">No voices installed</option>';
+      return;
+    }
+    let saved = ''; try { saved = gd('cnx.read.voice', ''); } catch (e) {}
+    sel.innerHTML = '<option value="">Automatic</option>' +
+      voices.map((v) => '<option value="' + esc(v.name) + '"' +
+        (v.name === saved ? ' selected' : '') + '>' + esc(v.name) + ' \u00b7 ' + esc(v.lang) +
+        '</option>').join('');
+  }
+
   window.cnxBriefReload = function () {
-    const el = document.getElementById('nb'); if (el) el.dataset.loaded = '';
+    const el = document.getElementById('cnx-read'); if (el) el.dataset.loaded = '';
     render();
   };
 
