@@ -24313,5 +24313,147 @@ init();
   };
 })();
 </script>
+<style id="cnx-rv-css">
+
+.rv-bar{display:flex;gap:6px;align-items:center;margin-top:8px;flex-wrap:wrap;}
+.rv-btn{font-family:inherit;font-size:11px;padding:7px 11px;min-height:38px;border-radius:8px;cursor:pointer;
+  color:var(--text2);background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.1);transition:all .15s;}
+.rv-btn:hover{color:var(--text);border-color:rgba(0,212,160,.35);}
+.rv-btn.on{color:#04140f;background:var(--cyan);border-color:var(--cyan);font-weight:600;}
+.rv-btn.rec{color:#fff;background:var(--red);border-color:var(--red);animation:rvPulse 1.3s ease-in-out infinite;}
+@keyframes rvPulse{0%,100%{opacity:1}50%{opacity:.6}}
+.rv-note{font-size:10px;color:var(--text3);line-height:1.5;flex:1;min-width:120px;}
+@media(max-width:760px){.rv-btn{flex:1;min-height:44px;}.rv-note{width:100%;}}
+</style>
+<script>
+
+/* ── Voice in and out for the RixAI window ─────────────────────────────────
+   Dictate a question, and have the answer read back.
+
+   Two deliberate choices:
+
+   Speaking back is OFF by default and remembered. A chat window that starts
+   talking every time you ask something is unusable at a desk, and browsers
+   block synthesis without a gesture anyway — so the first tap of Speak is both
+   the consent and the unlock.
+
+   The mic uses webkitSpeechRecognition where it exists, but on iOS the
+   keyboard's own dictation key is more reliable and needs no permission
+   prompt — so when the API is missing the button says so rather than
+   disappearing, which otherwise reads as a broken feature. */
+(function () {
+  if (window.__cnxRixVoiceIO) return;
+  window.__cnxRixVoiceIO = true;
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let rec = null, listening = false;
+
+  const speakOn = () => { try { return gd('cnx.rix.speak', false); } catch (e) { return false; } };
+
+  window.cnxRixMic = function () {
+    const input = document.getElementById('rix-input');
+    if (!input) return;
+    if (!SR) {
+      alert('This browser has no speech recognition.\n\nOn iPhone, use the microphone key on the keyboard instead — tap the input, then the mic beside the space bar.');
+      input.focus();
+      return;
+    }
+    if (listening) { try { rec.stop(); } catch (e) {} return; }
+    rec = new SR();
+    rec.lang = 'en-IN';
+    rec.interimResults = true;
+    rec.continuous = false;
+    const before = input.value ? input.value.trim() + ' ' : '';
+    rec.onresult = (e) => {
+      let t = '';
+      for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
+      input.value = before + t;
+    };
+    rec.onend = () => { listening = false; paint();
+      // Send automatically only on a final result, so a mis-tap does not fire
+      // an empty question at the model.
+      const v = (input.value || '').trim();
+      if (v && v !== before.trim() && typeof rixSend === 'function') rixSend();
+    };
+    rec.onerror = () => { listening = false; paint(); };
+    try { rec.start(); listening = true; paint(); }
+    catch (e) { listening = false; paint(); }
+  };
+
+  window.cnxRixSpeakToggle = function () {
+    const next = !speakOn();
+    try { sd('cnx.rix.speak', next); } catch (e) {}
+    if (!next && window.speechSynthesis) window.speechSynthesis.cancel();
+    if (typeof toast === 'function') toast(next ? 'Rix will read answers aloud' : 'Spoken answers off');
+    paint();
+  };
+
+  window.cnxRixSpeak = function (text) {
+    const synth = window.speechSynthesis;
+    if (!synth || !speakOn() || !text) return;
+    const voices = synth.getVoices() || [];
+    let saved = ''; try { saved = gd('cnx.read.voice', ''); } catch (e) {}
+    const enhanced = (v) => /enhanced|premium|neural/i.test(v.name);
+    const u = new SpeechSynthesisUtterance(String(text).replace(/\. /g, '. … '));
+    // Shares the voice chosen for the morning read — one setting, not two.
+    u.voice = (saved && voices.find(v => v.name === saved))
+           || voices.find(v => enhanced(v) && /en[-_]US/i.test(v.lang))
+           || voices.find(v => /en[-_]US/i.test(v.lang))
+           || voices.find(v => /^en/i.test(v.lang)) || null;
+    u.rate = 0.95; u.pitch = 0.98;
+    synth.cancel(); synth.speak(u);
+  };
+
+  function paint() {
+    const mic = document.getElementById('rv-mic');
+    const spk = document.getElementById('rv-speak');
+    if (mic) { mic.textContent = listening ? '■ Listening…' : '\u{1F3A4} Dictate';
+               mic.classList.toggle('rec', listening); }
+    if (spk) { spk.textContent = (speakOn() ? '\u{1F50A}' : '\u{1F507}') + ' Read answers';
+               spk.classList.toggle('on', speakOn()); }
+  }
+
+  function install() {
+    const input = document.getElementById('rix-input');
+    if (!input || document.getElementById('rv-bar')) { paint(); return; }
+    const bar = document.createElement('div');
+    bar.id = 'rv-bar'; bar.className = 'rv-bar';
+    bar.innerHTML =
+      '<button class="rv-btn" id="rv-mic" onclick="cnxRixMic()">\u{1F3A4} Dictate</button>' +
+      '<button class="rv-btn" id="rv-speak" onclick="cnxRixSpeakToggle()">\u{1F507} Read answers</button>' +
+      '<span class="rv-note">' + (SR ? 'Dictate sends when you stop speaking.'
+                                     : 'Use the keyboard mic key to dictate on iPhone.') + '</span>';
+    (input.parentNode || input).insertBefore(bar, input.nextSibling);
+    paint();
+  }
+
+  // Speak each new assistant reply, once. rixRenderChat redraws the whole log,
+  // so the last message is tracked rather than the DOM.
+  let spokenAt = 0;
+  const prevRender = window.rixRenderChat;
+  if (typeof prevRender === 'function') {
+    window.rixRenderChat = function () {
+      const out = prevRender.apply(this, arguments);
+      try {
+        const msgs = window.rixMessages || [];
+        const last = msgs[msgs.length - 1];
+        if (last && last.role !== 'user' && last.t && last.t > spokenAt) {
+          spokenAt = last.t;
+          cnxRixSpeak(last.text);
+        }
+      } catch (e) {}
+      return out;
+    };
+  }
+
+  const prev = window.buildView;
+  window.buildView = function (id) {
+    let out; try { out = (typeof prev === 'function') ? prev(id) : undefined; }
+    catch (e) { console.error('upstream buildView failed for', id, e); }
+    if (id === 'rixai') setTimeout(() => { try { install(); } catch (e) { console.error('rix voice io:', e); } }, 120);
+    return out;
+  };
+  setTimeout(() => { try { install(); } catch (e) {} }, 1500);
+})();
+</script>
 </body>
 </html>
