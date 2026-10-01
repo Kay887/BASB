@@ -24197,5 +24197,121 @@ init();
   };
 })();
 </script>
+<style id="cnx-ra-css">
+
+.ra-list{display:flex;flex-direction:column;gap:2px;margin-top:4px;}
+.ra-row{display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-bottom:1px solid var(--rule);}
+.ra-row:last-child{border-bottom:none;}
+.ra-row.done .ra-txt{color:var(--text3);text-decoration:line-through;}
+.ra-when{font-family:var(--font-mono);font-size:10.5px;color:var(--text3);width:92px;flex-shrink:0;padding-top:2px;}
+.ra-when.late{color:var(--amber);}
+.ra-txt{flex:1;min-width:0;font-size:12.5px;line-height:1.6;color:var(--text2);overflow-wrap:anywhere;}
+.ra-acts{display:flex;gap:5px;flex-shrink:0;}
+.ra-foot{font-size:10.5px;line-height:1.6;color:var(--text3);margin-top:11px;padding-top:10px;border-top:1px solid var(--rule);}
+@media(max-width:760px){.ra-row{flex-wrap:wrap;}.ra-when{width:auto;}.ra-acts{margin-left:auto;}}
+</style>
+<script>
+
+/* ── REN: show the alerts the bell is holding ──────────────────────────────
+   buildRen() aggregates checklist.items, academy.reminders and neurix.todos
+   and calls that "every existing reminder store across the app". It is missing
+   the one that actually drives notifications: reminder_alerts, in Supabase.
+
+   The consequence is the reported one — a reminder created with a due time
+   lands in reminder_alerts and appears on the bell, while one created without
+   a time lands in checklist.items and appears in REN, and neither list shows
+   the other. Two reminder systems, one of them invisible depending on how you
+   added the thing.
+
+   This appends the server-side alerts to the REN view. It does not copy them
+   into a blob store — that would be a second source of truth for rows the
+   notification engine owns, and deleting one would not cancel the other. */
+(function () {
+  if (window.__cnxRenAlerts) return;
+  window.__cnxRenAlerts = true;
+  const esc = (x) => cnxEsc(String(x ?? ''));
+  let ROWS = null, loading = false;
+
+  async function load() {
+    if (!sbClient || !authUserId || loading) return;
+    loading = true;
+    try {
+      const since = new Date(Date.now() - 2 * 864e5).toISOString();
+      const { data, error } = await sbClient.from('reminder_alerts')
+        .select('id,text,due_at,notified')
+        .eq('user_id', authUserId)
+        .gte('due_at', since)
+        .order('due_at', { ascending: true }).limit(120);
+      // The engine writes bookkeeping rows into the same table — generation
+      // markers and brief-sent stamps. They are not reminders.
+      ROWS = (error ? [] : (data || [])).filter(r => !/^__/.test(r.text || ''));
+      if (error) console.error('ren alerts:', error.message);
+    } catch (e) { console.error('ren alerts:', e); ROWS = []; }
+    loading = false;
+    render();
+  }
+
+  window.cnxRenAlertDone = async function (id) {
+    if (!confirm('Mark this reminder done?\n\nIt stops notifying and leaves the queue.')) return;
+    try {
+      await sbClient.from('reminder_alerts').update({ notified: true }).eq('id', id);
+      if (typeof toast === 'function') toast('Done');
+    } catch (e) { alert('Could not update: ' + e.message); }
+    ROWS = null; render();
+  };
+
+  window.cnxRenAlertDelete = async function (id) {
+    if (!confirm('Delete this reminder?\n\nIt is removed from the notification queue entirely.')) return;
+    try {
+      await sbClient.from('reminder_alerts').delete().eq('id', id);
+      if (typeof toast === 'function') toast('Deleted');
+    } catch (e) { alert('Could not delete: ' + e.message); }
+    ROWS = null; render();
+  };
+
+  function render() {
+    const host = document.getElementById('view-ren');
+    if (!host) return;
+    let el = document.getElementById('ren-alerts');
+    if (!el) { el = document.createElement('div'); el.id = 'ren-alerts'; el.className = 'card'; host.insertBefore(el, host.firstChild); }
+    if (ROWS === null) {
+      const noSession = (typeof sbClient === 'undefined' || !sbClient || !authUserId);
+      el.innerHTML = '<div class="card-title">Scheduled reminders</div><div class="empty">' +
+        (noSession ? 'Sign in to load.' : 'Loading…') + '</div>';
+      if (!noSession) load();
+      return;
+    }
+    const pending = ROWS.filter(r => !r.notified);
+    el.innerHTML =
+      '<div class="card-title">Scheduled reminders ' +
+      '<span style="color:var(--text3);font-weight:400;font-size:9px">from the notification queue — these are what actually fire</span></div>' +
+      (ROWS.length
+        ? '<div class="ra-list">' + ROWS.map(r => {
+            const d = new Date(r.due_at);
+            const past = d.getTime() < Date.now();
+            return '<div class="ra-row' + (r.notified ? ' done' : '') + '">' +
+              '<span class="ra-when' + (past && !r.notified ? ' late' : '') + '">' +
+                esc(d.toLocaleString(undefined, {day:'numeric', month:'short', hour:'2-digit', minute:'2-digit'})) + '</span>' +
+              '<span class="ra-txt">' + esc(r.text) + '</span>' +
+              '<span class="ra-acts">' +
+                (r.notified ? '' : '<button class="btn btn-sm" onclick="cnxRenAlertDone(\'' + esc(r.id) + '\')">Done</button>') +
+                '<button class="btn btn-sm" onclick="cnxRenAlertDelete(\'' + esc(r.id) + '\')">×</button>' +
+              '</span></div>';
+          }).join('') + '</div>' +
+          '<div class="ra-foot">' + pending.length + ' pending of ' + ROWS.length + ' shown. ' +
+          'Reminders added with a due time live here; ones added without a time stay in the checklist below.</div>'
+        : '<div class="empty">Nothing queued.</div>');
+  }
+
+  window.cnxRenAlertsReload = function () { ROWS = null; render(); };
+  const prev = window.buildView;
+  window.buildView = function (id) {
+    let out; try { out = (typeof prev === 'function') ? prev(id) : undefined; }
+    catch (e) { console.error('upstream buildView failed for', id, e); }
+    if (id === 'ren') setTimeout(() => { try { render(); } catch (e) { console.error('ren alerts:', e); } }, 120);
+    return out;
+  };
+})();
+</script>
 </body>
 </html>
