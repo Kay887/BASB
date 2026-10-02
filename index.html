@@ -2297,6 +2297,7 @@ async function authVerifyCode() {
   const { data, error } = await sbClient.auth.verifyOtp({ email: sd_authEmail, token, type: 'email' });
   if (error) { document.getElementById('auth-msg').textContent = 'Invalid or expired code — try again.'; return; }
   authUserId = data.user.id;
+  window.authUserId = authUserId;
   localStorage.setItem('cnx_auth_uid', authUserId);
   document.getElementById('auth-screen').classList.remove('show');
   cloudLoad();
@@ -2309,6 +2310,7 @@ async function checkAuthSession() {
   const { data } = await sbClient.auth.getSession();
   if (data?.session?.user?.id) {
     authUserId = data.session.user.id;
+    window.authUserId = authUserId;
     return true;
   }
   return false;
@@ -20430,7 +20432,13 @@ init();
         if (!overlap) soft.push({start:t,end:t+25,type:w.type,window:w.label});
       }
     });
-    return soft.slice(0, budget);
+    // No truncation here. Cutting the list to the capacity budget at this point
+    // is what starved CyberNeurix completely: the slots are built in clock
+    // order, the weekday shape puts the ESecurityIn windows first, so six units
+    // of budget were always spent before the first CNX window was reached. The
+    // budget is a quantity of work, not a cutoff time — so the caller allocates
+    // it across domains and this returns everything that is actually free.
+    return soft;
   }
 
   function makePlan(events) {
@@ -20448,7 +20456,7 @@ init();
       : items;
     const planBudget = cap.units;
     const includeNight = mode === 'weekday' && st.nightExtension === 'on';
-    const slots = freeFocusSlots(mode, events, planBudget, includeNight);
+    const allSlots = freeFocusSlots(mode, events, planBudget, includeNight);
     const used = {esecurityin:0,cyberneurix:0};
     const plan = [];
 
@@ -20466,6 +20474,57 @@ init();
       return rank(a) - rank(b);
     };
     const ordered = dayItems.slice().sort(byDue);
+
+    // ── Spending the budget across both workstreams ────────────────────────
+    // A day has far more free 25-minute slots than the capacity allows, so
+    // something has to choose which ones to use. Taking the earliest N is the
+    // obvious choice and the wrong one: the weekday shape opens with ESecurityIn
+    // windows, so the earliest six are all ESI and the CyberNeurix tree — every
+    // wave-1 revenue wedge included — could never be scheduled at all.
+    //
+    // Instead the budget is split between the domains that have work waiting,
+    // the day's leading workstream taking the larger share, and each domain then
+    // fills its own windows in clock order. Unusable share is handed back rather
+    // than wasted, so a day with no CNX work still gives all six units to ESI.
+    const DOMAINS = ['esecurityin', 'cyberneurix'];
+    const lead = mode === 'saturday' ? 'cyberneurix' : mode === 'sunday' ? null : 'esecurityin';
+    const waiting = {}, free = {};
+    DOMAINS.forEach((d) => {
+      waiting[d] = ordered.filter((x) => x.domain === d).length;
+      free[d] = allSlots.filter((s2) => s2.type === d).length;
+    });
+    // The most urgent item in the day outranks the day's usual shape. A must-do
+    // due inside two days should not wait for Saturday because it happens to
+    // belong to the other workstream.
+    const top = ordered[0];
+    const urgentOther = top && lead && top.domain !== lead && top.priority === 'must' &&
+      top.due && (new Date(top.due) - Date.now()) < 2 * 86400e3 ? top.domain : null;
+    const favoured = urgentOther || lead;
+    const quota = {};
+    DOMAINS.forEach((d) => { quota[d] = 0; });
+    let left = planBudget;
+    const eligible = DOMAINS.filter((d) => waiting[d] > 0 && free[d] > 0);
+    if (eligible.length === 1) {
+      quota[eligible[0]] = Math.min(left, free[eligible[0]]);
+    } else if (eligible.length > 1) {
+      // 60/40 toward the favoured workstream, rounded so an odd budget favours it.
+      const share = {};
+      share[favoured] = Math.ceil(planBudget * 0.6);
+      eligible.filter((d) => d !== favoured).forEach((d) => { share[d] = planBudget - share[favoured]; });
+      eligible.forEach((d) => { quota[d] = Math.min(share[d] || 0, free[d]); left -= quota[d]; });
+      // Anything a domain could not use goes to whoever still has room.
+      eligible.forEach((d) => {
+        if (left <= 0) return;
+        const room = Math.min(left, free[d] - quota[d]);
+        if (room > 0) { quota[d] += room; left -= room; }
+      });
+    }
+    // Each domain fills its own windows earliest-first, then back into clock order.
+    const picked = {};
+    DOMAINS.forEach((d) => { picked[d] = 0; });
+    const slots = allSlots
+      .filter((s2) => { if (picked[s2.type] >= (quota[s2.type] || 0)) return false; picked[s2.type] += 1; return true; })
+      .sort((x, y) => x.start - y.start);
 
     // Up to three back-to-back units before moving on, and never carrying one
     // objective across a window boundary — a block that ends is a real break.
@@ -23916,7 +23975,8 @@ init();
     if (SPEAKING) { synth.cancel(); SPEAKING = false; paintBtn(); return; }
     const el = document.getElementById('cnx-read-text');
     if (!el) return;
-    const u = new SpeechSynthesisUtterance(el.textContent || '');
+    const u = new SpeechSynthesisUtterance(
+      window.cnxSpeakable ? window.cnxSpeakable(el.textContent || '') : (el.textContent || ''));
     // Female US English by preference. The platform exposes no gender field, so
     // this matches on the known-female voice names iOS and macOS ship, then
     // falls back to any en-US, then any English at all. Named first rather than
@@ -23924,13 +23984,22 @@ init();
     const voices = synth.getVoices() || [];
     const FEMALE_US = ['Samantha', 'Ava', 'Allison', 'Susan', 'Zoe', 'Nicky',
                        'Google US English', 'Karen', 'Moira'];
-    u.voice = FEMALE_US.map((n) => voices.find((v) => v.name === n && /en[-_]US/i.test(v.lang)))
+    // An Enhanced or Premium voice beats every name-based guess: iOS ships a
+    // compact version of each voice under the SAME name, and the compact one is
+    // what sounds synthetic. Prefer whichever downloaded voice exists, and
+    // honour the saved pick first so this and the Rix bar never disagree.
+    let savedVoice = ''; try { savedVoice = gd('cnx.read.voice', ''); } catch (e) {}
+    const better = (v) => /enhanced|premium|neural|siri/i.test(v.name);
+    u.voice = (savedVoice && voices.find((v) => v.name === savedVoice))
+           || voices.filter((v) => better(v) && /en[-_](US|GB|IN)/i.test(v.lang))[0]
+           || FEMALE_US.map((n) => voices.find((v) => v.name === n && /en[-_]US/i.test(v.lang)))
                        .find(Boolean)
            || FEMALE_US.map((n) => voices.find((v) => v.name.startsWith(n))).find(Boolean)
            || voices.find((v) => /en[-_]US/i.test(v.lang))
            || voices.find((v) => /^en/i.test(v.lang)) || null;
-    // Slightly under a full stop: news read at 1.0 runs together.
-    u.rate = 0.96; u.pitch = 1.0;
+    // Slightly under a full stop: news read at 1.0 runs together. Pitch a
+    // touch below neutral reads as calmer rather than announcer-bright.
+    u.rate = 0.93; u.pitch = 0.97;
     u.onend = () => { SPEAKING = false; paintBtn(); };
     u.onerror = () => { SPEAKING = false; paintBtn(); };
     synth.cancel();
@@ -24393,7 +24462,8 @@ init();
     const voices = synth.getVoices() || [];
     let saved = ''; try { saved = gd('cnx.read.voice', ''); } catch (e) {}
     const enhanced = (v) => /enhanced|premium|neural/i.test(v.name);
-    const u = new SpeechSynthesisUtterance(String(text).replace(/\. /g, '. … '));
+    const u = new SpeechSynthesisUtterance(
+      window.cnxSpeakable ? window.cnxSpeakable(text) : String(text));
     // Shares the voice chosen for the morning read — one setting, not two.
     u.voice = (saved && voices.find(v => v.name === saved))
            || voices.find(v => enhanced(v) && /en[-_]US/i.test(v.lang))
@@ -24453,6 +24523,374 @@ init();
     return out;
   };
   setTimeout(() => { try { install(); } catch (e) {} }, 1500);
+})();
+</script>
+<script>
+
+/* ── Making synthesis sound like speech ────────────────────────────────────
+   A voice engine reads exactly what it is handed, and this app's answers are
+   full of things that are fine on screen and awful aloud:
+
+     "08:30-08:45"  -> "zero eight colon three zero en-dash zero eight..."
+     "RixControl"   -> one run-together unstressed word
+     "7.2h"         -> "seven point two aitch"
+     "**bold**"     -> "asterisk asterisk bold"
+
+   Most of what sounds robotic is not the voice. It is being given text written
+   to be read with the eyes. This rewrites it into something a person would
+   actually say, and both the morning read and RixAI share it, so a bad
+   pronunciation gets fixed in one place. */
+(function () {
+  if (window.__cnxSpeakable) return;
+  window.__cnxSpeakable = true;
+
+  const HOUR = ['twelve','one','two','three','four','five','six','seven',
+                'eight','nine','ten','eleven'];
+  // "a.m." has full stops in it, and the sentence-pause rule below keys on a
+  // full stop — so it would insert a breath inside the phrase and leave a
+  // doubled stop behind. The meridiem is carried as a sentinel through every
+  // rule and only spelled out at the very end, after pauses are placed.
+  const AM = '\u0001', PM = '\u0002';
+  const spokenTime = (h, m) => {
+    const hh = +h, mm = +m;
+    if (hh > 23 || mm > 59) return h + ':' + m;
+    const tail = hh < 12 ? AM : PM;
+    const name = HOUR[hh % 12];
+    if (mm === 0) return name + tail;
+    if (mm < 10)  return name + ' oh ' + mm + tail;
+    return name + ' ' + mm + tail;          // "eight 45" is read "eight forty-five"
+  };
+
+  window.cnxSpeakable = function (text) {
+    let t = String(text == null ? '' : text);
+    // Markdown and code marks get read out as the names of the punctuation.
+    t = t.replace(/[*`#>]+/g, '').replace(/(^|\s)_+|_+(\s|$)/g, '$1$2');
+    // Ranges first, so a block becomes one phrase instead of two readings.
+    t = t.replace(/(\d{1,2}):(\d{2})\s*[–—-]\s*(\d{1,2}):(\d{2})/g,
+      (_, a, b, c, d) => {
+        const from = spokenTime(a, b), to = spokenTime(c, d);
+        // "eight 30 a.m. to eight 45 a.m." is how a machine says it. A person
+        // says the meridiem once, at the end, when both halves share it.
+        const same = from.slice(-1) === to.slice(-1) && (to.endsWith(AM) || to.endsWith(PM));
+        return (same ? from.slice(0, -1) : from) + ' to ' + to;
+      });
+    t = t.replace(/\b(\d{1,2}):(\d{2})\b/g, (_, a, b) => spokenTime(a, b));
+    // Units and initialisms the engine otherwise spells letter by letter.
+    t = t.replace(/\b(\d+(?:\.\d+)?)\s*hrs?\b/gi, '$1 hours')
+         .replace(/\b(\d+(?:\.\d+)?)h\b/g, '$1 hours')
+         .replace(/\bkcal\b/gi, 'calories')
+         .replace(/\bbpm\b/gi, 'beats per minute')
+         .replace(/\bRHR\b/g, 'resting heart rate')
+         .replace(/\bHR\b/g, 'heart rate');
+    // Names that otherwise run together without a pause between the syllables.
+    t = t.replace(/\bRix(Trace|Control|Intel|Nexis|One|Logix|Shield|AI)\b/g, 'Rix $1')
+         .replace(/\bCyberNeurix\b/g, 'Cyber Neurix')
+         .replace(/\bESecurityIn\b/g, 'E Security In')
+         .replace(/\bCNIS\b/g, 'C-N-I-S')
+         .replace(/\bCNX\b/g, 'C-N-X')
+         .replace(/\bREN\b/g, 'Ren')
+         .replace(/\bGA\b/g, 'Google Analytics');
+    // Dashes are read as a word or skipped; a comma is what becomes a breath.
+    t = t.replace(/\s*[–—]\s*/g, ', ')
+         .replace(/\s+-\s+/g, ', ')
+         .replace(/([A-Za-z])\/([A-Za-z])/g, '$1 or $2')
+         .replace(/\s*[·•|]\s*/g, ', ');
+    // Bullets become sentences of their own rather than one long run.
+    t = t.replace(/^\s*[-•]\s+/, '')
+         .replace(/\n\s*[-•]\s*/g, '. … ').replace(/\n+/g, '. … ');
+    // A beat between sentences. The ellipsis is the one mark every engine rests on.
+    t = t.replace(/([.!?])\s+/g, '$1 … ');
+    return t.replace(new RegExp(AM, 'g'), ' a.m.').replace(new RegExp(PM, 'g'), ' p.m.')
+            .replace(/\.{2,}/g, '.')          // "p.m." followed by the original stop
+            .replace(/\s+([,.;:!?])/g, '$1')  // stripped markup left a space before punctuation
+            .replace(/\s{2,}/g, ' ').replace(/(,\s*){2,}/g, ', ').trim();
+  };
+})();
+</script>
+<style id="cnx-hist-css">
+.d21-hist-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:2px 0 8px;}
+.d21-hist{width:100%;border-collapse:collapse;font-size:11px;font-family:var(--font-mono);min-width:330px;}
+.d21-hist th{text-align:right;padding:5px 7px;color:var(--text3);font-weight:500;font-size:10px;
+  text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid rgba(255,255,255,.1);white-space:nowrap;}
+.d21-hist th:first-child,.d21-hist td:first-child{text-align:left;}
+.d21-hist td{text-align:right;padding:5px 7px;color:var(--text2);border-bottom:1px solid rgba(255,255,255,.04);white-space:nowrap;}
+.d21-hist tr.now td{color:var(--text);font-weight:600;}
+.d21-hist td.thin{color:var(--amber);}
+</style>
+<script>
+
+/* ── Body, last 7 days ─────────────────────────────────────────────────────
+   The Body panel above reads the synced blob, which only ever holds today:
+   health-ingest mirrors the current day into health.auto[today] and overwrites
+   it on the next run. So the moment the date rolls over, yesterday is gone from
+   the app even though it is still in the database.
+
+   health_readings has kept every reading since 30 Sep, and health_daily
+   summarises it with the per-metric rule each metric actually needs (max for
+   step and energy totals, latest for resting HR, earliest for sleep). Nothing
+   in the app was reading either one. This does.
+
+   It also shows the reading count per day, which is the part the mutable table
+   could never show: one reading where two automations were expected is a missed
+   run, and it should look different from a genuinely quiet day. */
+(function () {
+  if (window.__cnxHealthHist) return;
+  window.__cnxHealthHist = true;
+
+  let CACHE = null, loading = false;
+  const n1 = (v) => (v == null ? '—' : (Math.round(v * 10) / 10).toLocaleString());
+  const n0 = (v) => (v == null ? '—' : Math.round(v).toLocaleString());
+
+  async function load() {
+    if (CACHE || loading) return CACHE;
+    loading = true;
+    try {
+      if (typeof sbClient === 'undefined' || !sbClient || !window.authUserId) return null;
+      const since = new Date(Date.now() - 13 * 86400e3).toISOString().slice(0, 10);
+      const { data, error } = await sbClient.from('health_daily')
+        .select('date,steps,active_energy,resting_hr,sleep_hours,readings,last_reading_at')
+        .eq('user_id', window.authUserId).gte('date', since)
+        .order('date', { ascending: false }).limit(14);
+      if (error) { console.warn('health_daily:', error.message); return null; }
+      CACHE = data || [];
+      return CACHE;
+    } finally { loading = false; }
+  }
+
+  function card(rows) {
+    const el = document.createElement('div');
+    el.className = 'card d21-card';
+    el.id = 'd21-hist';
+    if (rows === null) {
+      el.innerHTML = '<div class="card-title">Body · history</div>' +
+        '<div class="empty">Sign in to read the reading log.</div>';
+      return el;
+    }
+    if (!rows.length) {
+      el.innerHTML = '<div class="card-title">Body · history</div>' +
+        '<div class="empty">No readings in <code>health_readings</code> yet. The log starts ' +
+        'from the first automation run after 30 Sep — anything before that was only ever ' +
+        'written to the mutable daily row and is not recoverable.</div>';
+      return el;
+    }
+    const today = (typeof todayKey === 'function') ? todayKey() : '';
+    // A log that simply stops looks identical to a quiet fortnight, which is the
+    // exact failure health_readings exists to make visible. If the newest
+    // reading is more than a day and a half old the automation is not
+    // delivering, and the card says so instead of rendering one lonely row.
+    const newest = rows[0] && rows[0].last_reading_at ? new Date(rows[0].last_reading_at) : null;
+    const ageH = newest ? (Date.now() - newest.getTime()) / 3600e3 : null;
+    const stale = ageH != null && ageH > 36;
+    el.innerHTML = '<div class="card-title">Body \u00b7 last ' + rows.length + ' days</div>' +
+      (stale
+        ? '<div class="d21-warn">Nothing has arrived for <b>' + Math.floor(ageH / 24) +
+          ' days</b>. The last reading was ' + newest.toLocaleString([], {dateStyle: 'medium', timeStyle: 'short'}) +
+          '. The table below is history, not today \u2014 the Shortcut is not delivering. ' +
+          'Run it by hand and read the response: <code>health-ingest</code> echoes a <code>sent</code> ' +
+          'object showing which fields arrived and which were absent.</div>'
+        : '') +
+      '<div class="d21-hist-wrap"><table class="d21-hist"><thead><tr>' +
+      '<th>Date</th><th>Steps</th><th>kcal</th><th>Sleep</th><th>RHR</th><th>Runs</th>' +
+      '</tr></thead><tbody>' +
+      rows.map((r) => {
+        const d = new Date(r.date + 'T00:00:00');
+        const lbl = r.date === today ? 'Today'
+          : d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
+        // Two automations a day are expected. One is a run that did not fire.
+        const thin = (r.readings || 0) < 2;
+        return '<tr' + (r.date === today ? ' class="now"' : '') + '>' +
+          '<td>' + lbl + '</td><td>' + n0(r.steps) + '</td><td>' + n1(r.active_energy) + '</td>' +
+          '<td>' + n1(r.sleep_hours) + '</td><td>' + n0(r.resting_hr) + '</td>' +
+          '<td class="' + (thin ? 'thin' : '') + '" title="' +
+            (thin ? 'Fewer readings than the two daily runs expected' : 'Readings logged') + '">' +
+            (r.readings || 0) + '</td></tr>';
+      }).join('') +
+      '</tbody></table></div>' +
+      '<div class="d21-src">Summarised from <code>health_readings</code> via the ' +
+      '<code>health_daily</code> view — steps and energy take the day’s highest ' +
+      'reading (each run reports a running total), resting heart rate the latest, sleep the ' +
+      'earliest (before a nap can inflate it). An amber run count is a missed automation.</div>';
+    return el;
+  }
+
+  async function attach() {
+    const host = document.getElementById('d21');
+    if (!host) return;
+    const body = Array.from(host.querySelectorAll('.d21-card')).find((c) => {
+      const t = c.querySelector('.card-title');
+      return t && t.textContent.trim() === 'Body';
+    });
+    if (!body) return;
+    const rows = await load();
+    const old = document.getElementById('d21-hist');
+    if (old) old.remove();
+    body.insertAdjacentElement('afterend', card(rows));
+  }
+
+  // Dropped so the next open re-reads: a manual automation run during the
+  // session should show up without a reload.
+  window.cnxHealthHistReload = function () { CACHE = null; attach(); };
+
+  const prev = window.buildView;
+  window.buildView = function (id) {
+    let out; try { out = (typeof prev === 'function') ? prev(id) : undefined; }
+    catch (e) { console.error('upstream buildView failed for', id, e); }
+    // After the dashboard's own render, which runs at 160ms on first paint.
+    if (id === 'dashboard') setTimeout(() => { attach().catch((e) => console.error('hist:', e)); }, 200);
+    return out;
+  };
+  setTimeout(() => { try { if (typeof currentView !== 'undefined' && currentView === 'dashboard') attach(); } catch (e) {} }, 400);
+})();
+</script>
+<style id="cnx-rixfiles-css">
+#rix-files{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:8px;}
+.rix-file{display:inline-flex;align-items:center;gap:6px;font-size:10px;font-family:var(--font-mono);
+  color:var(--text2);background:rgba(0,212,160,.07);border:1px solid rgba(0,212,160,.25);
+  border-radius:7px;padding:4px 6px 4px 8px;max-width:100%;overflow-wrap:anywhere;}
+.rix-file-sz{color:var(--text3);}
+.rix-file-x{font-family:inherit;font-size:13px;line-height:1;cursor:pointer;background:none;
+  border:none;color:var(--text3);padding:0 2px;min-width:20px;min-height:20px;}
+.rix-file-x:hover{color:var(--red);}
+.rix-file-clear{font-family:inherit;font-size:10px;cursor:pointer;color:var(--text3);
+  background:none;border:1px solid rgba(255,255,255,.12);border-radius:7px;padding:4px 8px;min-height:28px;}
+.rix-file-note{font-size:10px;color:var(--text3);}
+@media(max-width:760px){.rix-file{font-size:11px;}.rix-file-x{min-width:30px;min-height:30px;font-size:15px;}}
+</style>
+<script>
+
+/* ── Attaching files to RixAI ──────────────────────────────────────────────
+   A plain <input type="file"> is the right control here, not a drag target: on
+   iPhone it opens the share sheet, which already offers Files, iCloud Drive,
+   Photos and whatever else is installed. Nothing custom is needed to reach the
+   Files app.
+
+   What goes to the model is TEXT. The page has no PDF or Word parser and is not
+   getting one for this, so a binary is rejected by name with a sentence saying
+   what to do instead, rather than silently sending zero useful bytes and letting
+   the answer be confidently wrong about a document it never saw.
+
+   Attachments survive the send. You usually want to ask three questions about
+   one document, and clearing on send would mean re-attaching for each. They are
+   listed with a remove button, so what the model can see is always on screen. */
+(function () {
+  if (window.__cnxRixFiles) return;
+  window.__cnxRixFiles = true;
+
+  const TEXT_EXT = /\.(txt|md|markdown|csv|tsv|json|jsonl|log|ya?ml|toml|ini|conf|env|sql|html?|xml|svg|css|js|mjs|ts|tsx|jsx|py|rb|go|rs|java|c|h|cpp|sh|bash)$/i;
+  const PER_FILE = 60000;   // characters kept from any one file
+  const TOTAL    = 120000;  // ceiling across all of them
+
+  let FILES = [];           // {name, size, text, truncated}
+
+  const kb = (n) => (n < 1024 ? n + ' B' : (n / 1024).toFixed(n < 102400 ? 1 : 0) + ' KB');
+  // Not `esc` — that one lives inside another block's closure and is not global
+  // here, so calling it threw and the chips silently never rendered. A filename
+  // comes from the user's own disk but still goes into innerHTML, and a file
+  // called `<img onerror=...>.txt` is a perfectly legal filename.
+  const h = (v) => String(v == null ? '' : v).replace(/[&<>"']/g,
+    (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  window.cnxRixAttach = function () {
+    let inp = document.getElementById('rix-file-input');
+    if (!inp) {
+      inp = document.createElement('input');
+      inp.type = 'file'; inp.multiple = true; inp.id = 'rix-file-input';
+      inp.style.display = 'none';
+      inp.addEventListener('change', () => { take(Array.from(inp.files || [])); inp.value = ''; });
+      document.body.appendChild(inp);
+    }
+    inp.click();
+  };
+
+  async function take(list) {
+    const rejected = [];
+    for (const f of list) {
+      if (!TEXT_EXT.test(f.name)) { rejected.push(f.name); continue; }
+      if (FILES.some((x) => x.name === f.name && x.size === f.size)) continue;
+      let text = '';
+      try { text = await f.text(); } catch (e) { rejected.push(f.name); continue; }
+      const truncated = text.length > PER_FILE;
+      FILES.push({ name: f.name, size: f.size, text: text.slice(0, PER_FILE), truncated });
+    }
+    // Oldest first out, so the file just attached is always the one kept whole.
+    let total = FILES.reduce((a, x) => a + x.text.length, 0);
+    while (total > TOTAL && FILES.length > 1) {
+      total -= FILES.shift().text.length;
+      if (typeof toast === 'function') toast('Dropped the oldest attachment to stay inside the context limit');
+    }
+    paint();
+    if (rejected.length && typeof toast === 'function') {
+      toast('Not readable as text: ' + rejected.join(', ') +
+            ' — export or copy it into a .txt or .md first');
+    }
+  }
+
+  window.cnxRixDetach = function (i) { FILES.splice(i, 1); paint(); };
+  window.cnxRixDetachAll = function () { FILES = []; paint(); };
+
+  function paint() {
+    const bar = document.querySelector('.rv-bar');
+    if (!bar) return;
+    let el = document.getElementById('rix-files');
+    if (!FILES.length) { if (el) el.remove(); return; }
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'rix-files';
+      bar.insertAdjacentElement('afterend', el);
+    }
+    el.innerHTML = FILES.map((f, i) =>
+      '<span class="rix-file">\u{1F4C4} ' + h(f.name) +
+      '<span class="rix-file-sz">' + kb(f.size) + (f.truncated ? ' · trimmed' : '') + '</span>' +
+      '<button class="rix-file-x" title="Remove" onclick="cnxRixDetach(' + i + ')">×</button></span>'
+    ).join('') +
+    '<button class="rix-file-clear" onclick="cnxRixDetachAll()">Clear all</button>' +
+    '<span class="rix-file-note">Sent with every question until removed.</span>';
+  }
+
+  // The context builder is the one place every path into the model goes
+  // through — the Send button, Enter, dictation and the quick prompts all end
+  // up here — so decorating it means no caller has to know about attachments.
+  const prevCtx = window.rixBuildContext;
+  if (typeof prevCtx === 'function') {
+    window.rixBuildContext = function (q) {
+      const out = prevCtx.call(this, q) || {};
+      if (!FILES.length) return out;
+      const blocks = FILES.map((f) =>
+        '--- FILE: ' + f.name + (f.truncated ? ' (first ' + PER_FILE + ' characters only)' : '') +
+        ' ---\n' + f.text).join('\n\n');
+      out.text = (out.text || '') +
+        '\n\n═══ ATTACHED FILES ═══\n' +
+        'The user attached ' + FILES.length + ' file' + (FILES.length > 1 ? 's' : '') +
+        '. Answer from their contents where relevant, and say so when the answer ' +
+        'comes from an attachment rather than from the app state above.\n\n' + blocks;
+      return out;
+    };
+  } else {
+    console.warn('rixBuildContext missing — attachments will not reach the model');
+  }
+
+  // The button belongs beside Dictate, and the bar is rebuilt with the view.
+  function addBtn() {
+    const bar = document.querySelector('.rv-bar');
+    if (!bar || document.getElementById('rv-attach')) return;
+    const b = document.createElement('button');
+    b.className = 'rv-btn'; b.id = 'rv-attach'; b.type = 'button';
+    b.textContent = '\u{1F4C2} Attach';
+    b.title = 'Attach a text file from Files, iCloud Drive or this device';
+    b.onclick = window.cnxRixAttach;
+    const mic = document.getElementById('rv-mic');
+    if (mic) mic.insertAdjacentElement('afterend', b); else bar.appendChild(b);
+    paint();
+  }
+
+  const prev = window.buildView;
+  window.buildView = function (id) {
+    let out; try { out = (typeof prev === 'function') ? prev(id) : undefined; }
+    catch (e) { console.error('upstream buildView failed for', id, e); }
+    if (id === 'rixai') setTimeout(() => { try { addBtn(); } catch (e) { console.error('rix files:', e); } }, 140);
+    return out;
+  };
+  setTimeout(() => { try { addBtn(); } catch (e) {} }, 500);
 })();
 </script>
 </body>
